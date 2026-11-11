@@ -27,6 +27,65 @@ h1 span { color: var(--accent); }
 
 main { max-width: 1080px; margin: 14px auto 30px; padding: 0 22px; }
 
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tab {
+  background: none;
+  color: var(--dim);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font: 600 14px "Segoe UI", system-ui, sans-serif;
+}
+.tab.active { color: var(--accent); border-color: var(--line); background: var(--panel); }
+.tab:hover { color: var(--text); }
+
+.term {
+  background: #060a10;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 260px;
+  max-height: 480px;
+  overflow: auto;
+  font: 13.5px/1.6 "Cascadia Mono", Consolas, monospace;
+}
+.tline { white-space: pre-wrap; word-break: break-word; }
+.t-out { color: var(--text); }
+.t-err { color: var(--red); }
+.t-meta { color: var(--accent); }
+.t-dim { color: var(--dim); }
+.t-hint { color: var(--amber); cursor: pointer; }
+.t-hint:hover { color: #fde68a; }
+.t-echo { color: #e8eef4; font-weight: bold; }
+
+.prompt-row { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+.prompt-label {
+  font: bold 14px "Cascadia Mono", Consolas, monospace;
+  color: var(--accent);
+}
+.prompt-row input {
+  flex: 1;
+  background: #060a10;
+  color: #e8eef4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: 14px "Cascadia Mono", Consolas, monospace;
+  outline: none;
+}
+.prompt-row input:focus { border-color: var(--accent); }
+.prompt-row button {
+  background: #3d1a1a;
+  color: var(--red);
+  border: 1px solid #6b2727;
+  border-radius: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font: 600 14px "Segoe UI", system-ui, sans-serif;
+}
+.prompt-row button:hover { background: #4d2020; }
+
 .input-row { display: flex; gap: 10px; }
 .input-row input {
   flex: 1;

@@ -3,69 +3,98 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cleanroom — triage any GitHub repo before you run it</title>
-  <meta name="description" content="Paste a GitHub repo link and get a static risk report — install hooks, secrets, obfuscated blobs, typosquats, env reads — right in your browser. Nothing installed, nothing stored.">
+  <title>Cleanroom — paste a GitHub repo, run it right here</title>
+  <meta name="description" content="Paste a GitHub repo link and run its Python code in a disposable in-browser VM. Free, no install, no account. Close the tab and nothing remains.">
   <meta name="theme-color" content="#0a0e14">
-  <meta property="og:title" content="Cleanroom — triage any GitHub repo before you run it">
-  <meta property="og:description" content="Paste a repo link, get the risk report in your browser. Same engine as the CLI, proven identical by a CI parity gate. Nothing installed, nothing stored.">
+  <meta property="og:title" content="Cleanroom — run any GitHub repo in your browser, leave nothing behind">
+  <meta property="og:description" content="Paste a repo link → a disposable Python VM boots in this tab → use the repo live. Free. No install. Close the tab and it's gone.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Crect x='12' y='12' width='40' height='40' rx='6' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3Cpath d='M20 32l8 8 16-16' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
     <h1>Clean<span>room</span></h1>
-    <p class="sub">Paste a GitHub repo link → a <b>static risk report</b>, computed here in your browser. No server, no install, nothing stored.</p>
+    <p class="sub">Paste a GitHub repo → <b>run it right here</b>, in a disposable Python VM inside this tab.
+    Free. No install, no account, no server. <b>Close the tab and nothing remains.</b></p>
   </header>
 
   <main>
-    <div class="input-row">
-      <input id="repoUrl" type="text" spellcheck="false"
-             placeholder="https://github.com/owner/repo" />
-      <button id="scanBtn">Scan</button>
-    </div>
-    <div class="presets">
-      <span>or try:</span>
-      <button data-preset="sneaky">synthetic attacker fixture</button>
-      <button data-preset="benign">benign fixture</button>
-      <button data-preset="live">my edgar-rev (real repo)</button>
-    </div>
-    <div class="status" id="status"></div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="tab-run">run it</button>
+      <button class="tab" data-tab="tab-check">safety check (optional)</button>
+    </nav>
 
-    <div class="card hidden" id="verdictCard">
-      <div class="verdict-row">
-        <div class="score"><span id="scoreNum">–</span><small>/100</small></div>
-        <div class="verdict-word" id="verdictWord">–</div>
-        <div class="meta" id="scanMeta"></div>
+    <section id="tab-run">
+      <div class="input-row">
+        <input id="liveUrl" type="text" spellcheck="false"
+               placeholder="https://github.com/owner/repo" />
+        <button id="loadBtn">Run it</button>
       </div>
-      <div class="cat-row" id="catRow"></div>
-    </div>
+      <div class="presets">
+        <span>try one — these run for real:</span>
+        <button data-live-preset="https://github.com/amanvicky/spamcheck">spam classifier</button>
+        <button data-live-preset="https://github.com/amanvicky/attention-from-scratch">attention from scratch (numpy)</button>
+        <button data-live-preset="https://github.com/amanvicky/tokenizer-playground">byte-BPE tokenizer</button>
+      </div>
+      <div class="status" id="liveStatus"></div>
 
-    <div class="card hidden" id="findingsCard">
-      <h2>findings</h2>
-      <div class="findings" id="findings"></div>
-    </div>
+      <div class="card hidden" id="liveCard">
+        <div class="term" id="term"></div>
+        <div class="prompt-row">
+          <span class="prompt-label">repo&gt;</span>
+          <input id="termInput" spellcheck="false" autocomplete="off"
+                 placeholder="python, or: run main.py · ls · help · wipe">
+          <button id="wipeBtn" title="erase everything">wipe</button>
+        </div>
+        <p class="note">The VM lives in this tab's memory only — nothing was ever written to your disk.
+        It has no network sockets, so code here can't phone home. Whatever you run, you run
+        <b>at your own responsibility</b>. Close the tab when you're done: gone.</p>
+      </div>
+    </section>
 
-    <div class="card hidden" id="envCard">
-      <h2>environment variables it reads</h2>
-      <div class="cat-row" id="envRow"></div>
-    </div>
+    <section id="tab-check" class="hidden">
+      <div class="input-row">
+        <input id="repoUrl" type="text" spellcheck="false"
+               placeholder="https://github.com/owner/repo" />
+        <button id="scanBtn">Check</button>
+      </div>
+      <div class="presets">
+        <span>or:</span>
+        <button data-preset="sneaky">synthetic attacker fixture</button>
+        <button data-preset="benign">benign fixture</button>
+      </div>
+      <div class="status" id="status"></div>
 
-    <div class="card hidden" id="checkCard">
-      <h2>before you run this</h2>
-      <ul class="checklist" id="checklist"></ul>
-      <p class="note">A clean report means “nothing obvious” — not “safe”. Static triage cannot see everything.</p>
-    </div>
+      <div class="card hidden" id="verdictCard">
+        <div class="verdict-row">
+          <div class="score"><span id="scoreNum">–</span><small>/100</small></div>
+          <div class="verdict-word" id="verdictWord">–</div>
+          <div class="meta" id="scanMeta"></div>
+        </div>
+        <div class="cat-row" id="catRow"></div>
+      </div>
 
-    <div class="banner">
-      ⚠️ This tool triages code; it does not make code safe. If you decide to run a repo,
-      do it in the CLI sandbox (<b>python cleanroom.py run &lt;url&gt;</b>) — and always at
-      <b>your own responsibility</b>.
-    </div>
+      <div class="card hidden" id="findingsCard">
+        <h2>findings</h2>
+        <div class="findings" id="findings"></div>
+      </div>
+
+      <div class="card hidden" id="envCard">
+        <h2>environment variables it reads</h2>
+        <div class="cat-row" id="envRow"></div>
+      </div>
+
+      <div class="card hidden" id="checkCard">
+        <h2>before you run this</h2>
+        <ul class="checklist" id="checklist"></ul>
+        <p class="note">A clean report means “nothing obvious” — not “safe”.</p>
+      </div>
+    </section>
   </main>
 
   <footer>
     <a href="https://github.com/amanvicky/cleanroom" target="_blank" rel="noopener">source</a>
-    <a href="https://github.com/amanvicky/cleanroom/blob/main/parity-check.mjs" target="_blank" rel="noopener">JS = Python parity gate</a>
+    <a href="https://github.com/amanvicky/cleanroom#readme" target="_blank" rel="noopener">CLI sandbox (real process isolation)</a>
     <a href="https://github.com/amanvicky" target="_blank" rel="noopener">more from me</a>
   </footer>
 

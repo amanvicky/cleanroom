@@ -1,27 +1,9 @@
-/* Browser demo: paste a repo URL, fetch its text files over the GitHub API
-   (CORS-friendly), and run the SAME triage engine the CLI uses (cleanroom.js,
-   parity-checked against triage.py in CI). Everything stays in memory. */
+/* Triage tab + tab wiring. The live runner lives in runner.js.
+   Both tabs share repo fetching via repo_fetch.js. */
 
 import { scanTree } from "./cleanroom.js";
-
-const MAX_FILES = 250;
-const MAX_FILE_BYTES = 200 * 1024;
-const SKIP_PARTS = ["node_modules/", "dist/", "vendor/", ".min.js", ".lock", "package-lock.json"];
-const FETCH_POOL = 8;
-
-const TEXT_EXT = new Set([
-  "py", "js", "mjs", "cjs", "ts", "jsx", "tsx", "json", "sh", "bash",
-  "yml", "yaml", "toml", "cfg", "ini", "env", "txt", "md", "rst",
-  "rb", "go", "rs", "php", "pl", "ps1", "bat", "html", "xml", "csv", "css",
-]);
-
-function parseRepo(raw) {
-  let s = raw.trim().replace(/\.git$/, "").replace(/\/$/, "");
-  s = s.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/^github\.com\//i, "");
-  const m = s.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2] };
-}
+import { fetchRepoFiles } from "./repo_fetch.js";
+import "./runner.js";
 
 function status(msg, isError) {
   const el = document.getElementById("status");
@@ -29,65 +11,9 @@ function status(msg, isError) {
   el.className = "status" + (isError ? " error" : "");
 }
 
-async function gh(path) {
-  const res = await fetch("https://api.github.com" + path);
-  if (res.status === 403 && res.headers.get("X-RateLimit-Remaining") === "0") {
-    throw new Error("GitHub API rate limit reached (60/hour anonymous). The fixture presets below still work.");
-  }
-  if (!res.ok) throw new Error("GitHub API said " + res.status + " for " + path);
-  return res.json();
-}
-
-async function pool(items, worker) {
-  const out = new Array(items.length);
-  let next = 0;
-  const runners = Array.from({ length: Math.min(FETCH_POOL, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await worker(items[i], i);
-    }
-  });
-  await Promise.all(runners);
-  return out;
-}
-
 async function scanRepoUrl(raw) {
-  const parsed = parseRepo(raw);
-  if (!parsed) throw new Error("That doesn't look like a GitHub repo URL.");
-  const { owner, repo } = parsed;
-
-  const meta = await gh("/repos/" + owner + "/" + repo);
-  const branch = meta.default_branch || "main";
-  const tree = await gh("/repos/" + owner + "/" + repo + "/git/trees/" + branch + "?recursive=1");
-  if (!tree.tree) throw new Error("Could not read the file tree (is the repo empty?)");
-
-  const candidates = tree.tree.filter(t => {
-    if (t.type !== "blob") return false;
-    if (t.size > MAX_FILE_BYTES) return false;
-    const p = t.path;
-    if (SKIP_PARTS.some(part => p.includes(part))) return false;
-    const dot = p.lastIndexOf(".");
-    if (dot === -1) return false;
-    return TEXT_EXT.has(p.slice(dot + 1).toLowerCase());
-  }).slice(0, MAX_FILES);
-
-  const files = (await pool(candidates, async t => {
-    const res = await fetch("https://raw.githubusercontent.com/" + owner + "/" + repo +
-                            "/" + branch + "/" + t.path.split("/").map(encodeURIComponent).join("/"));
-    const text = res.ok ? await res.text() : "";
-    return [t.path, text];
-  })).filter(f => f[1]);
-
-  return { report: scanTree(files), label: owner + "/" + repo + " @ " + branch, files: files.length };
-}
-
-async function scanPreset(name) {
-  const file = name === "sneaky" ? "sneaky-installer" : "benign-notes-app";
-  const res = await fetch("./fixtures/" + file + ".json");
-  if (!res.ok) throw new Error("preset not found");
-  const files = await res.json();
-  const label = file + " (synthetic fixture)";
-  return { report: scanTree(files.map(f => [f.path, f.text])), label, files: files.length };
+  const { files, label } = await fetchRepoFiles(raw);
+  return { report: scanTree(files), label, files: files.length };
 }
 
 const CHECKS = [
@@ -189,9 +115,8 @@ async function runScan(fn) {
   }
   try {
     status("scanning…");
-    const result = await fn();
+    render(await fn());
     status("done — report below. Nothing was uploaded anywhere; it all ran in this tab.");
-    render(result);
   } catch (e) {
     status(e.message, true);
   } finally {
@@ -200,19 +125,29 @@ async function runScan(fn) {
 }
 
 document.getElementById("scanBtn").addEventListener("click", () => {
-  const v = document.getElementById("repoUrl").value;
-  runScan(() => scanRepoUrl(v));
+  runScan(() => scanRepoUrl(document.getElementById("repoUrl").value));
 });
 document.getElementById("repoUrl").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("scanBtn").click();
 });
 document.querySelectorAll("button[data-preset]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.preset === "live") {
-      document.getElementById("repoUrl").value = "https://github.com/amanvicky/edgar-rev";
-      runScan(() => scanRepoUrl("https://github.com/amanvicky/edgar-rev"));
-    } else {
-      runScan(() => scanPreset(btn.dataset.preset));
+  btn.addEventListener("click", () => runScan(() => scanPreset(btn.dataset.preset)));
+});
+
+async function scanPreset(name) {
+  const file = name === "sneaky" ? "sneaky-installer" : "benign-notes-app";
+  const res = await fetch("./fixtures/" + file + ".json");
+  if (!res.ok) throw new Error("preset not found");
+  const files = await res.json();
+  return { report: scanTree(files.map(f => [f.path, f.text])), label: file + " (synthetic fixture)", files: files.length };
+}
+
+/* tab wiring */
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
+    for (const section of ["tab-run", "tab-check"]) {
+      document.getElementById(section).classList.toggle("hidden", section !== tab.dataset.tab);
     }
   });
 });
