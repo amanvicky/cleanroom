@@ -15,4 +15,4 @@ authors = [{ name = "Aman Vicky" }]
 cleanroom = "cleanroom:main"
 
 [tool.setuptools]
-py-modules = ["cleanroom", "triage", "sandbox", "bridge"]
+py-modules = ["cleanroom", "triage", "sandbox", "bridge", "stages"]

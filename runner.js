@@ -78,6 +78,7 @@ async function connectBridge() {
       line([d.platform, d.cpu_cores + " cores", d.memory_gb ? d.memory_gb + " GB RAM" : "",
             "python " + d.python].filter(Boolean).join(" · "), "t-dim");
       line("paste a repo link above and press Run it", "t-dim");
+      renderStageChips();
     } else if (data.needs_token) {
       setLiveStatus("bridge found, but that token didn't match — check the cleanroom serve window", true);
     } else {
@@ -264,12 +265,17 @@ const PC_HELP = [
   "commands on this PC (real processes):",
   "  run <file.py>    execute a file from the repo on this machine",
   "  ls               list the sandbox clone",
-  "  pip <package>    pip inside the sandbox — outbound network is blocked, so PyPI downloads fail by design",
+  "  pip <package>    installs go into the sandbox's disposable venv — PyPI downloads need network, which is blocked by design",
+  "  save <name>      FREEZE this stage: files + package list → ~/.cleanroom/saves/<name>",
+  "  stages           list saved stage freezes",
+  "  resume <name>    wipe this sandbox, re-open a saved stage (files restored)",
+  "  forget <name>    delete a saved stage",
   "  approve          accept a DANGEROUS triage verdict (your responsibility)",
   "  wipe             delete the sandbox and verify zero residue",
   "  anything else    runs as Python in the repo directory (expressions are echoed)",
-  "the sandbox: temp-dir clone · whitelist environment (your secrets never reach it)",
+  "the sandbox: temp-dir clone + throwaway venv · whitelist environment (your secrets never reach it)",
   "             · no outbound network for python · 120s timeout · verified wipe",
+  "             · freeze saves files+packages; a live process's memory can't be frozen",
 ];
 
 async function pcLoadRepo(raw) {
@@ -293,7 +299,7 @@ async function pcLoadRepo(raw) {
   if (data.needs_approval) {
     line("this triaged DANGEROUS — type 'approve' if you still want to run it (at your own responsibility)", "t-err");
   } else {
-    line("sandbox ready on your PC: scrubbed secrets, no outbound network (python), wiped on exit", "t-dim");
+    line("sandbox ready on your PC: scrubbed secrets, disposable venv (pip never touches your real Python), no outbound network (python), wiped on exit", "t-dim");
     line("type python, 'run <file>', or 'help'", "t-dim");
   }
   setLiveStatus("this-PC session live — real processes on your machine, wiped clean on exit");
@@ -346,10 +352,53 @@ async function pcExec(text) {
     const { data } = await bridgeCall("/api/wipe", {});
     line("wiped on your PC — deleted: " + data.deleted + " · residue: " + data.residue +
          " · commands run: " + (data.commands || 0) + " · nothing was written outside the sandbox", "t-meta");
+    renderStageChips();
+    return;
+  }
+  if (c.startsWith("save ") || c === "save") {
+    const name = c.slice(5).trim();
+    const { data } = await bridgeCall("/api/save", { name });
+    if (data.ok) {
+      line("stage '" + name + "' frozen → " + data.path +
+           "  (" + data.files + " files, " + data.packages + " packages, " + data.seconds + "s)", "t-meta");
+      line("resume it any time with 'resume " + name + "' — or start fresh with the same repo", "t-dim");
+      renderStageChips();
+    } else {
+      line("save failed: " + data.error, "t-err");
+    }
+    return;
+  }
+  if (c === "stages") {
+    const { data } = await bridgeCall("/api/saves");
+    if (!data.stages.length) { line("no saved stages", "t-dim"); return; }
+    data.stages.forEach(s => line("  " + s.name.padEnd(20) + " saved " + s.saved_at +
+                                  "  pkgs=" + s.packages + "  " + String(s.source).slice(0, 50), "t-dim"));
+    return;
+  }
+  if (c.startsWith("resume ") || c === "resume") {
+    const name = c.slice(7).trim();
+    const { status, data } = await bridgeCall("/api/resume", { name });
+    if (!data.ok) { line("resume failed: " + data.error, "t-err"); return; }
+    const rep = data.report;
+    line("── stage '" + name + "' re-opened in a fresh sandbox (saved " + data.resumed_from.saved_at + ") ──", "t-meta");
+    line("score " + rep.score + "/100 " + rep.verdict.toUpperCase() +
+         " · " + rep.findings.length + " findings · " + rep.files_scanned + " files scanned", "t-dim");
+    line("files restored · " + data.packages + " package(s) listed in _cleanroom_stage_packages.txt" +
+         " · run 'pip install -r _cleanroom_stage_packages.txt' with network allowed to rebuild the venv", "t-dim");
+    if (data.needs_approval) line("this triaged DANGEROUS — type 'approve' before running", "t-err");
+    else line("continue where it left off — type python, or 'run <file>'", "t-dim");
+    return;
+  }
+  if (c.startsWith("forget ") || c === "forget") {
+    const name = c.slice(7).trim();
+    const { data } = await bridgeCall("/api/forget", { name });
+    line(data.ok ? "stage '" + name + "' deleted" : "forget failed: " + data.error,
+         data.ok ? "t-meta" : "t-err");
+    renderStageChips();
     return;
   }
   if (c === "ls") {
-    await pcStream({ py: "import os\nprint('\\n'.join(sorted(sum([[os.path.join(r, f) for f in fs] for r, _, fs in os.walk('.')], []))))" });
+    listRepoFiles().forEach(f => line(f, "t-dim"));
     return;
   }
   const runMatch = c.match(/^run\s+(\S+)$/);
@@ -359,12 +408,38 @@ async function pcExec(text) {
   await pcStream({ py: c });
 }
 
+async function renderStageChips() {
+  try {
+    const { data } = await bridgeCall("/api/saves");
+    const row = document.getElementById("pcStages");
+    if (!row) return;
+    row.innerHTML = "";
+    if (!data.stages || !data.stages.length) {
+      document.getElementById("pcStagesRow").classList.add("hidden");
+      return;
+    }
+    document.getElementById("pcStagesRow").classList.remove("hidden");
+    data.stages.forEach(s => {
+      const chip = document.createElement("button");
+      chip.className = "chip env";
+      chip.textContent = s.name + " (" + s.saved_at.slice(11, 16) + ")";
+      chip.title = "resume this stage — " + String(s.source).slice(0, 60);
+      chip.addEventListener("click", () => pcExec("resume " + s.name));
+      row.appendChild(chip);
+    });
+  } catch (e) { /* bridge gone — ignore */ }
+}
+
 async function execLine(raw) {
   const cmd = raw.trim();
   if (!cmd) return;
   if (cmd === "clear") { term.innerHTML = ""; return; }
   if (cmd === "help" || cmd === "?") { HELP.forEach(l => line(l, "t-dim")); return; }
   if (cmd === "wipe") { await wipeVM(); return; }
+  if (cmd === "stages" || cmd.startsWith("save ") || cmd.startsWith("resume ") || cmd.startsWith("forget ")) {
+    line("freeze/resume is a this-PC feature — the in-tab VM dies with this tab, so there is nothing to save here", "t-dim");
+    return;
+  }
   if (cmd === "ls") {
     listRepoFiles().forEach(f => line(f, "t-dim"));
     return;

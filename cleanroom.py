@@ -20,6 +20,7 @@ import os
 import sys
 
 import sandbox
+import stages
 import triage
 
 try:
@@ -208,7 +209,13 @@ def cmd_run(args):
         " (python children via sitecustomize guard; other runtimes: reported-only)"
         if sess.net == "blocked" else ""))
     print("      per-command timeout: %ds" % sess.timeout)
-    print("      commands run inside the sandbox. type 'exit' to close and wipe everything.")
+    if getattr(sess, "resumed_from", None):
+        print("      resumed stage '%s' (saved %s) — %d package(s) recorded in _cleanroom_stage_packages.txt" % (
+            sess.resumed_from["name"], sess.resumed_from["saved_at"],
+            sess.stage_meta.get("packages", 0)))
+    else:
+        print("      disposable venv: pip installs land inside the sandbox, never in your real Python")
+    print("      commands run inside the sandbox. type 'help' for stage commands, 'exit' to wipe.")
 
     if args.cmd:
         code, out, err, secs = sess.execute(args.cmd, capture=True)
@@ -234,12 +241,54 @@ def cmd_run(args):
             if line in ("exit", "quit", "q"):
                 break
             if line in ("help", "?"):
-                print("  <command>   run it inside the sandbox (shell)")
-                print("  report      show the triage report again")
-                print("  exit        kill everything and wipe the sandbox")
+                print("  <command>     run it inside the sandbox (shell)")
+                print("  report        show the triage report again")
+                print("  save <name>   freeze this stage: files + package list (~/.cleanroom/saves)")
+                print("  stages        list saved stages")
+                print("  resume <name> wipe this sandbox and re-open a saved stage")
+                print("  forget <name> delete a saved stage")
+                print("  exit          kill everything and wipe the sandbox")
                 continue
             if line == "report":
                 print(render_report(rep, args.target))
+                continue
+            if line.startswith("save ") or line == "save":
+                name = line[5:].strip()
+                try:
+                    res = stages.save(sess, name)
+                    print("  stage '%s' frozen → %s  (%d files, %d packages, %.1fs)" % (
+                        name, res["path"], res["files"], res["packages"], res["seconds"]))
+                except (stages.StageError, ValueError) as e:
+                    print("  " + str(e))
+                continue
+            if line == "stages":
+                rows = stages.list_stages()
+                if not rows:
+                    print("  no saved stages")
+                for row in rows:
+                    print("  %-20s %-16s pkgs=%-3d cmds=%-3d %s" % (
+                        row["name"], row["saved_at"], row["packages"],
+                        row["commands_run"], str(row["source"])[:50]))
+                continue
+            if line.startswith("resume ") or line == "resume":
+                name = line[7:].strip()
+                try:
+                    audit = sess.close("resume-other-stage")
+                    print("  previous sandbox wiped [%s]" % ("ok" if audit["deleted"] else "FAILED"))
+                    sess = stages.resume(name, net=sess.net, timeout=sess.timeout)
+                    rep = sess.report
+                    print("  stage '%s' re-opened in a fresh sandbox — files restored, %d package(s) listed in _cleanroom_stage_packages.txt" % (
+                        name, sess.stage_meta.get("packages", 0)))
+                except (stages.StageError, ValueError, sandbox.SandboxError) as e:
+                    print("  " + str(e))
+                continue
+            if line.startswith("forget ") or line == "forget":
+                name = line[7:].strip()
+                try:
+                    stages.forget(name)
+                    print("  stage '%s' deleted" % name)
+                except (stages.StageError, ValueError) as e:
+                    print("  " + str(e))
                 continue
             try:
                 code, _, _, secs = sess.execute(line)
@@ -257,6 +306,76 @@ def cmd_run(args):
             "ok" if audit["deleted"] else "FAILED", len(audit["residue"])))
         _print_audit(sess, args.target)
     return code
+
+
+def cmd_stages(args):
+    rows = stages.list_stages()
+    if not rows:
+        print("no saved stages (~/.cleanroom/saves is empty)")
+        return 0
+    print("saved stages:")
+    for row in rows:
+        print("  %-20s saved %s  pkgs=%-3d cmds=%-3d  %s" % (
+            row["name"], row["saved_at"], row["packages"],
+            row["commands_run"], str(row["source"])[:60]))
+    return 0
+
+
+def cmd_resume(args):
+    try:
+        sess = stages.resume(args.name, net=("allowed" if args.net else "blocked"),
+                             timeout=args.timeout)
+    except (stages.StageError, ValueError, sandbox.SandboxError) as e:
+        print(str(e))
+        return 2
+    rep = sess.report
+    print("== cleanroom ==")
+    print("stage '%s' (saved %s) re-opened in a fresh disposable sandbox" % (
+        args.name, sess.resumed_from["saved_at"]))
+    print(render_report(rep, str(sess.stage_meta.get("source", args.name))))
+    if args.cmd:
+        code, out, err, secs = sess.execute(args.cmd, capture=True)
+        if out:
+            print(out, end="" if out.endswith("\n") else "\n")
+        if err:
+            print(err, end="" if err.endswith("\n") else "\n")
+        sess.close("done")
+        return 0 if code == 0 else 1
+    print("files restored. %d package(s) recorded in _cleanroom_stage_packages.txt" % (
+        sess.stage_meta.get("packages", 0)))
+    print("run 'pip install -r _cleanroom_stage_packages.txt' (with --net) to rebuild the venv")
+    try:
+        while True:
+            try:
+                line = input("cleanroom> ").strip()
+            except EOFError:
+                break
+            if not line:
+                continue
+            if line in ("exit", "quit", "q"):
+                break
+            try:
+                code, _, _, secs = sess.execute(line)
+            except sandbox.SandboxError as e:
+                print("  " + str(e))
+                continue
+            print("  → exit code %s in %.1fs" % (code, secs))
+    except KeyboardInterrupt:
+        print("\n(interrupted)")
+    finally:
+        sess.close("exit")
+        print("sandbox wiped.")
+    return 0
+
+
+def cmd_forget(args):
+    try:
+        stages.forget(args.name)
+        print("stage '%s' deleted" % args.name)
+        return 0
+    except (stages.StageError, ValueError) as e:
+        print(str(e))
+        return 2
 
 
 def cmd_serve(args):
@@ -322,6 +441,20 @@ def main(argv=None):
     serve_p = sub.add_parser("serve", help="let the cleanroom web page drive THIS PC's sandbox")
     serve_p.add_argument("--port", type=int, default=8641, help="localhost port (default 8641)")
     serve_p.set_defaults(func=cmd_serve)
+
+    st = sub.add_parser("stages", help="list saved stage freezes")
+    st.set_defaults(func=cmd_stages)
+
+    res = sub.add_parser("resume", help="re-open a saved stage in a fresh sandbox")
+    res.add_argument("name")
+    res.add_argument("--cmd", default=None, help="run one command then wipe")
+    res.add_argument("--net", action="store_true")
+    res.add_argument("--timeout", type=int, default=120)
+    res.set_defaults(func=cmd_resume)
+
+    fg = sub.add_parser("forget", help="delete a saved stage")
+    fg.add_argument("name")
+    fg.set_defaults(func=cmd_forget)
 
     args = ap.parse_args(argv)
     return args.func(args)

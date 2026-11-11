@@ -145,12 +145,16 @@ class SandboxError(RuntimeError):
 class Session:
     """One disposable cleanroom. open() → report() → execute()* → close()."""
 
-    def __init__(self, url=None, local=None, net="blocked", timeout=120, runner=None):
+    def __init__(self, url=None, local=None, net="blocked", timeout=120, runner=None,
+                 use_venv=True):
         self.url = url
         self.local = os.path.abspath(local) if local else None
         self.net = net          # "blocked" | "allowed"
         self.timeout = timeout  # seconds per command
         self.runner = runner or sys.executable
+        self.use_venv = use_venv
+        self._venv_ready = False
+        self.venv_note = None   # set if the venv could not be created
         self.dir = None
         self.child = None
         self._timer = None
@@ -221,12 +225,40 @@ class Session:
 
     # -- execution ----------------------------------------------------------
 
+    def _ensure_venv(self):
+        """Create a throwaway venv INSIDE the sandbox. pip installs — even with
+        --net — land here and die with the wipe; the real Python is untouchable."""
+        if self._venv_ready or not self.use_venv or not self.dir:
+            return
+        venv_dir = os.path.join(self.dir, "venv")
+        p = subprocess.run([sys.executable, "-m", "venv", venv_dir],
+                           capture_output=True, text=True)
+        if p.returncode == 0 and os.path.isdir(venv_dir):
+            self._venv_ready = True
+        else:
+            self.use_venv = False
+            self.venv_note = "venv creation failed — children use the host interpreter"
+
+    def venv_bin_dir(self):
+        if not self._venv_ready:
+            return None
+        return os.path.join(self.dir, "venv",
+                            "Scripts" if sys.platform == "win32" else "bin")
+
     def _child_env(self):
+        self._ensure_venv()
         env, _ = scrub_env()
-        # put the real interpreter first on PATH so `python` inside the sandbox
-        # is the same binary running the CLI, not a Store/installer stub that
-        # would download a runtime into the sandbox
-        env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
+        real_py = os.path.dirname(sys.executable)
+        if self._venv_ready:
+            # venv first: `python` and `pip` inside the sandbox are the
+            # disposable ones; the host interpreter stays as a fallback
+            vbin = self.venv_bin_dir()
+            env["PATH"] = vbin + os.pathsep + real_py + os.pathsep + env.get("PATH", "")
+            env["VIRTUAL_ENV"] = os.path.dirname(vbin)
+        else:
+            # real interpreter first so `python` is the CLI's binary, not a
+            # Store/installer stub that would download a runtime
+            env["PATH"] = real_py + os.pathsep + env.get("PATH", "")
         if self.net == "blocked":
             guard_dir = os.path.join(self.dir, "guard")
             os.makedirs(guard_dir, exist_ok=True)

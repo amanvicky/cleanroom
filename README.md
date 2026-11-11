@@ -123,19 +123,44 @@ ok   findings (28)
 parity: cleanroom.js === triage.py on all fixtures
 ```
 
+## Stage freezes: freeze where it is, resume later — or start fresh
+
+Closing a sandbox is always a verified wipe. But if you **want** to keep a moment, you can
+freeze it — the one opt-in thing that touches your disk:
+
+```bash
+# inside the sandbox (CLI or the web page in "this PC" mode)
+cleanroom> python train.py                 # repo runs, writes files, installs packages
+cleanroom> save experiment-1               # FREEZE: files + package list → ~/.cleanroom/saves/experiment-1
+cleanroom> exit                            # wipe — your PC is spotless
+
+cleanroom> resume experiment-1             # later: fresh sandbox, files restored, packages listed
+cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and start fresh with the same repo
+```
+
+- a freeze captures **the repo tree as the repo left it** (every file it wrote) plus the exact
+  `pip freeze` of its disposable venv
+- **resume** opens a brand-new sandbox pre-loaded with that tree; the saved package list ships
+  inside as `_cleanroom_stage_packages.txt` — one pip command (with `--net`) rebuilds the venv
+- **fresh is always the default**; `forget` deletes a stage
+- honest boundary: a freeze preserves **files and packages**. A live process's memory can't be
+  frozen — rerun your entry point and it picks up from the saved files.
+
 ## Honest limitations
 
 | control | how | where it works |
 |---|---|---|
 | browser VM isolation | WebAssembly tab, no disk, no sockets | everywhere, all repos (pure Python) |
+| **disposable venv** | `python -m venv` inside the sandbox — pip installs never touch the real Python | CLI + this-PC mode, all OSes |
 | ephemeral clone + wipe verification | `mkdtemp` → delete → residue re-scan | CLI, all OSes |
 | secret-scrubbed environment | whitelist env for children | CLI, all OSes |
 | outbound network block | generated `sitecustomize` socket guard | CLI, **Python children only** |
+| stage freeze / resume | opt-in copy to `~/.cleanroom/saves/<name>` | CLI + this-PC mode |
 | CPU / memory limits | **not enforced** (`resource` limits are posix-only) | — |
 
 - The browser VM runs **pure-Python** code and Pyodide's wheel catalog; compiled extensions that
   aren't in that catalog can't load, `input()` isn't wired up, and an infinite loop freezes the
-  tab (refresh recovers; nothing was saved anyway).
+  tab (refresh recovers; nothing was saved anyway). Freeze/resume is a this-PC feature.
 - A clean triage report means **"nothing obvious"**, not "safe". Static analysis can't see
   everything.
 - This is not a VM in the kernel sense. For genuinely hostile code, use a real isolating VM.

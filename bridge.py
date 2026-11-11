@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import sandbox
+import stages as stages_mod
 import triage
 
 VERSION = "0.1.0"
@@ -79,6 +80,7 @@ class Bridge:
             "version": VERSION,
             "device": device_specs(),
             "sandbox_defaults": {"net": "blocked", "timeout_s": 120},
+            "stages": stages_mod.list_stages(),
             "session": None if not s else {
                 "url": s.url or s.local,
                 "commit": getattr(s, "commit", None),
@@ -86,6 +88,7 @@ class Bridge:
                 "score": s.report["score"],
                 "commands": s.commands,
                 "open": not s.closed,
+                "resumed_from": getattr(s, "resumed_from", None),
             },
         }
 
@@ -167,6 +170,48 @@ class Bridge:
                     "deleted": audit["deleted"], "residue": len(audit["residue"]),
                     "commands": audit["commands"], "duration_s": audit["duration_s"]}
 
+    def api_save(self, name):
+        with self.lock:
+            s = self.session
+            if not s or s.closed:
+                return {"ok": False, "error": "no open session to save"}
+            try:
+                res = stages_mod.save(s, name)
+            except (stages_mod.StageError, ValueError) as e:
+                return {"ok": False, "error": str(e)}
+            self._log_ext("save   %s — %d files, %d packages" % (name, res["files"], res["packages"]))
+            return res
+
+    def api_resume(self, name):
+        with self.lock:
+            if self.session and not self.session.closed:
+                return {"ok": False, "error": "a session is already open — wipe it first"}
+            try:
+                sess = stages_mod.resume(name, net="blocked", timeout=120)
+            except (stages_mod.StageError, ValueError, sandbox.SandboxError) as e:
+                return {"ok": False, "error": str(e)}
+            self.session = sess
+            self._log_ext("resume %s — fresh sandbox pre-loaded from the saved stage" % name)
+            return {"ok": True, "report": sess.report,
+                    "resumed_from": sess.resumed_from,
+                    "packages": sess.stage_meta.get("packages", 0),
+                    "needs_approval": sess.report["verdict"] in ("high-risk", "dangerous")
+                                      and not getattr(sess, "approved", False)}
+
+    def api_forget(self, name):
+        try:
+            res = stages_mod.forget(name)
+        except (stages_mod.StageError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        self._log_ext("forget  %s" % name)
+        return res
+
+    def _log_ext(self, msg):
+        try:
+            print("  [%s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
+        except OSError:
+            pass
+
 
 class _Handler(BaseHTTPRequestHandler):
     bridge = None  # set by serve()
@@ -212,6 +257,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._reply({"ok": False, "needs_token": True}, 401)
             since = int(qs.get("since", ["0"])[0])
             return self._reply(self.bridge.api_output(since))
+        if u.path == "/api/saves":
+            if not self._token_ok(qs, body):
+                return self._reply({"ok": False, "needs_token": True}, 401)
+            return self._reply({"ok": True, "stages": stages_mod.list_stages()})
         return self._reply({"ok": False, "error": "unknown endpoint"}, 404)
 
     def do_POST(self):
@@ -254,6 +303,25 @@ class _Handler(BaseHTTPRequestHandler):
             res = self.bridge.api_wipe()
             self._log("wipe   residue %d" % res.get("residue", -1))
             return self._reply(res)
+
+        if u.path == "/api/save":
+            name = (body.get("name") or "").strip()
+            if not name:
+                return self._reply({"ok": False, "error": "name required"}, 400)
+            return self._reply(self.bridge.api_save(name))
+
+        if u.path == "/api/resume":
+            name = (body.get("name") or "").strip()
+            if not name:
+                return self._reply({"ok": False, "error": "name required"}, 400)
+            res = self.bridge.api_resume(name)
+            return self._reply(res, 200 if res.get("ok") else 409)
+
+        if u.path == "/api/forget":
+            name = (body.get("name") or "").strip()
+            if not name:
+                return self._reply({"ok": False, "error": "name required"}, 400)
+            return self._reply(self.bridge.api_forget(name))
 
         return self._reply({"ok": False, "error": "unknown endpoint"}, 404)
 
