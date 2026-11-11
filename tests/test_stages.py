@@ -31,10 +31,11 @@ def test_child_python_is_the_sandbox_venv():
         assert prefix.lower().startswith(s.dir.lower()), prefix
         assert os.path.isdir(os.path.join(s.dir, "venv"))
         assert s.venv_note is None
-        # pip exists and belongs to the venv
+        # pip exists and belongs to the venv (compare the unique temp-dir
+        # basename — Windows short paths make full-path comparisons flaky)
         code, out, _, _ = s.execute('pip --version', capture=True)
         assert code == 0
-        assert s.dir.lower() in out.lower()
+        assert os.path.basename(s.dir) in out and "venv" in out
     finally:
         s.close("test")
 
