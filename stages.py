@@ -65,7 +65,8 @@ def save(session, name):
     shutil.copytree(
         repo_src, repo_dst,
         ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__",
-                                      ".venv", "venv", "__pypackages__"))
+                                      ".venv", "venv", "__pypackages__",
+                                      "_repl_*", "_cleanroom_stage_packages.txt"))
 
     packages = []
     venv_bin = session.venv_bin_dir()
