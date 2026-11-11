@@ -108,7 +108,7 @@ def _font_css(value):
     fam = None
     for tok in tokens:
         if _re.fullmatch(r"-?\d+", tok):
-            css["fontSize"] = abs(int(tok)) + "px"
+            css["fontSize"] = str(abs(int(tok))) + "px"
         elif tok == "bold":
             css["fontWeight"] = "600"
         elif tok in ("italic", "oblique"):
