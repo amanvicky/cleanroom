@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cleanroom — triage any GitHub repo before you run it</title>
+  <meta name="description" content="Paste a GitHub repo link and get a static risk report — install hooks, secrets, obfuscated blobs, typosquats, env reads — right in your browser. Nothing installed, nothing stored.">
+  <meta name="theme-color" content="#0a0e14">
+  <meta property="og:title" content="Cleanroom — triage any GitHub repo before you run it">
+  <meta property="og:description" content="Paste a repo link, get the risk report in your browser. Same engine as the CLI, proven identical by a CI parity gate. Nothing installed, nothing stored.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Crect x='12' y='12' width='40' height='40' rx='6' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3Cpath d='M20 32l8 8 16-16' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Clean<span>room</span></h1>
+    <p class="sub">Paste a GitHub repo link → a <b>static risk report</b>, computed here in your browser. No server, no install, nothing stored.</p>
+  </header>
+
+  <main>
+    <div class="input-row">
+      <input id="repoUrl" type="text" spellcheck="false"
+             placeholder="https://github.com/owner/repo" />
+      <button id="scanBtn">Scan</button>
+    </div>
+    <div class="presets">
+      <span>or try:</span>
+      <button data-preset="sneaky">synthetic attacker fixture</button>
+      <button data-preset="benign">benign fixture</button>
+      <button data-preset="live">my edgar-rev (real repo)</button>
+    </div>
+    <div class="status" id="status"></div>
+
+    <div class="card hidden" id="verdictCard">
+      <div class="verdict-row">
+        <div class="score"><span id="scoreNum">–</span><small>/100</small></div>
+        <div class="verdict-word" id="verdictWord">–</div>
+        <div class="meta" id="scanMeta"></div>
+      </div>
+      <div class="cat-row" id="catRow"></div>
+    </div>
+
+    <div class="card hidden" id="findingsCard">
+      <h2>findings</h2>
+      <div class="findings" id="findings"></div>
+    </div>
+
+    <div class="card hidden" id="envCard">
+      <h2>environment variables it reads</h2>
+      <div class="cat-row" id="envRow"></div>
+    </div>
+
+    <div class="card hidden" id="checkCard">
+      <h2>before you run this</h2>
+      <ul class="checklist" id="checklist"></ul>
+      <p class="note">A clean report means “nothing obvious” — not “safe”. Static triage cannot see everything.</p>
+    </div>
+
+    <div class="banner">
+      ⚠️ This tool triages code; it does not make code safe. If you decide to run a repo,
+      do it in the CLI sandbox (<b>python cleanroom.py run &lt;url&gt;</b>) — and always at
+      <b>your own responsibility</b>.
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://github.com/amanvicky/cleanroom" target="_blank" rel="noopener">source</a>
+    <a href="https://github.com/amanvicky/cleanroom/blob/main/parity-check.mjs" target="_blank" rel="noopener">JS = Python parity gate</a>
+    <a href="https://github.com/amanvicky" target="_blank" rel="noopener">more from me</a>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

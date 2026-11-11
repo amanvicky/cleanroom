@@ -1,0 +1,6 @@
+__pycache__/
+*.egg-info/
+parity-tree.json
+parity-py.json
+.pytest_cache/
+.venv/

@@ -1,0 +1,18 @@
+[
+ {
+  "path": "README.md",
+  "text": "# benign-notes-app\n\nA deliberately boring fixture: a small notes client. Used by the\n[cleanroom](https://github.com/amanvicky/cleanroom) test suite to make sure\nthe triage engine does NOT raise scored findings on ordinary code that simply\nuses HTTP and reads an environment variable.\n"
+ },
+ {
+  "path": "app.py",
+  "text": "\"\"\"A deliberately boring notes app \u2014 cleanroom's 'clean' fixture.\n\nUses the network and reads one environment variable, like most real apps.\nContains nothing the triage engine should score.\n\"\"\"\n\nimport os\n\nimport requests\n\nAPI_URL = \"https://api.example.com/notes\"\n\n\ndef fetch_notes():\n    base = os.environ.get(\"NOTES_API_URL\", API_URL)\n    resp = requests.get(base, timeout=10)\n    return resp.json()\n\n\ndef add_note(text):\n    resp = requests.post(API_URL, json={\"text\": text}, timeout=10)\n    return resp.status_code\n\n\nif __name__ == \"__main__\":\n    print(\"notes fixture: %d notes\" % len(fetch_notes()))\n"
+ },
+ {
+  "path": "pyproject.toml",
+  "text": "[project]\nname = \"benign-notes-app\"\nversion = \"0.1.0\"\ndescription = \"Cleanroom's deliberately boring clean fixture\"\nrequires-python = \">=3.9\"\ndependencies = [\n    \"flask>=3.0.0\",\n    \"requests>=2.31.0\",\n]\n"
+ },
+ {
+  "path": "requirements.txt",
+  "text": "flask==3.0.0\nrequests==2.31.0\n"
+ }
+]

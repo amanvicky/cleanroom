@@ -1,0 +1,159 @@
+:root {
+  --bg: #0a0e14;
+  --panel: #10161f;
+  --line: #1c2733;
+  --text: #c9d4df;
+  --dim: #7b8a99;
+  --accent: #00e5a0;
+  --red: #f87171;
+  --amber: #fbbf24;
+  --violet: #c084fc;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 "Segoe UI", system-ui, sans-serif;
+}
+
+header { padding: 26px 22px 6px; max-width: 1080px; margin: 0 auto; }
+h1 { margin: 0; font-size: 26px; letter-spacing: 0.4px; color: #e8eef4; }
+h1 span { color: var(--accent); }
+.sub { margin: 4px 0 0; color: var(--dim); }
+.sub b { color: #e8eef4; }
+
+main { max-width: 1080px; margin: 14px auto 30px; padding: 0 22px; }
+
+.input-row { display: flex; gap: 10px; }
+.input-row input {
+  flex: 1;
+  background: #0b111a;
+  color: #e8eef4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font: 14px/1.4 "Cascadia Mono", Consolas, monospace;
+  outline: none;
+}
+.input-row input:focus { border-color: var(--accent); }
+.input-row button {
+  background: var(--accent);
+  color: #04150f;
+  border: none;
+  border-radius: 8px;
+  padding: 0 22px;
+  font: 600 15px "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+.input-row button:disabled { opacity: 0.5; cursor: wait; }
+
+.presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.presets span { color: var(--dim); font-size: 13px; }
+.presets button {
+  background: #0b111a;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.presets button:hover { border-color: var(--accent); color: var(--accent); }
+
+.status { margin: 14px 0 0; color: var(--dim); font-size: 14px; min-height: 20px; }
+.status.error { color: var(--red); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 14px;
+}
+.hidden { display: none; }
+
+.verdict-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.score {
+  font: bold 44px/1 "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 1px;
+}
+.score small { font-size: 18px; color: var(--dim); }
+.verdict-word {
+  font: bold 20px/1 "Cascadia Mono", Consolas, monospace;
+  padding: 10px 16px;
+  border-radius: 9px;
+  letter-spacing: 1px;
+}
+.v-clean { background: #143d33; color: var(--accent); border: 1px solid #1d5c4d; }
+.v-caution { background: #3d321a; color: var(--amber); border: 1px solid #6b5a27; }
+.v-high-risk, .v-dangerous { background: #3d1a1a; color: var(--red); border: 1px solid #6b2727; }
+.meta { color: var(--dim); font-size: 14px; }
+
+.cat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.chip {
+  font: 13px/1 "Cascadia Mono", Consolas, monospace;
+  padding: 7px 10px;
+  border-radius: 6px;
+}
+.chip.crit { background: #3d1a1a; color: #f0a58e; border: 1px solid #6b2727; }
+.chip.high { background: #3d321a; color: #f3d38b; border: 1px solid #6b5a27; }
+.chip.med  { background: #2c1a3d; color: var(--violet); border: 1px solid #4f326b; }
+.chip.info { background: #12283d; color: #7ec8e8; border: 1px solid #1d3d5c; }
+.chip.env  { background: #0b111a; color: #9fb2c4; border: 1px solid var(--line); }
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--amber);
+}
+
+.findings { max-height: 430px; overflow: auto; }
+.frow {
+  display: grid;
+  grid-template-columns: 86px 110px 1fr;
+  gap: 10px;
+  padding: 8px 6px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+  align-items: baseline;
+}
+.frow:first-child { border-top: none; }
+.frow .rule { color: #e8eef4; font-family: "Cascadia Mono", Consolas, monospace; }
+.frow .where { color: var(--dim); font-family: "Cascadia Mono", Consolas, monospace; text-align: right; }
+.frow .snip {
+  color: var(--text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checklist { margin: 0; padding-left: 20px; color: var(--text); }
+.checklist li { margin: 6px 0; }
+
+.note { color: var(--dim); font-style: italic; margin-top: 10px; }
+
+.banner {
+  margin-top: 16px;
+  border: 1px solid #6b5a27;
+  background: #3d321a;
+  color: #f3d38b;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 14px;
+}
+
+footer {
+  max-width: 1080px;
+  margin: 0 auto 30px;
+  padding: 0 22px;
+  display: flex;
+  gap: 22px;
+}
+footer a { color: var(--dim); text-decoration: none; font-size: 14px; }
+footer a:hover { color: var(--accent); }

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cleanroom-runner"
+version = "0.1.0"
+description = "Paste a GitHub repo link: risk report, disposable sandbox, zero residue. Static triage + ephemeral sandboxing for the AI-agent era."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Aman Vicky" }]
+
+[project.scripts]
+cleanroom = "cleanroom:main"
+
+[tool.setuptools]
+py-modules = ["cleanroom", "triage", "sandbox"]

