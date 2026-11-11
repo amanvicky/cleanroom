@@ -70,6 +70,37 @@ nothing was written outside the sandbox. you were never here.
 
 ![CLI: a clean repo runs; a dangerous fixture is declined and wiped](docs/cleanroom-run.png)
 
+## Full-PC mode: the website driving your real machine
+
+A website can never touch your whole PC by itself — browsers block that on purpose. The honest way
+to get it is a **local bridge**: one command, and the same web page runs repos with your complete
+PC — real interpreter, real processes, your real CPU — still inside the sandbox.
+
+```bash
+python cleanroom.py serve          # binds 127.0.0.1 only, prints a one-time token
+```
+
+Open [amanvicky.github.io/cleanroom](https://amanvicky.github.io/cleanroom/), switch to
+**“this PC”**, paste the token. The page shows your real specs (cores, RAM, Python) and from then
+on repos you run there execute as real processes on your machine — with the full guardrail set:
+whitelist environment, network guard, timeout, and a wipe that re-verifies zero residue. A repo
+that triages DANGEROUS must be explicitly approved before it runs.
+
+```
+── triaged on your PC: https://github.com/amanvicky/spamcheck @ 8f3cc12 ──
+score 56/100 HIGH-RISK · 8 findings · 17 files scanned
+this triaged DANGEROUS — type 'approve' if you still want to run it
+...
+repo> import spamcheck as s; m = s.load_model(); s.classify(m, "URGENT! ...")
+('spam', 0.9999999968719924, [...])
+→ exit 0
+repo> wipe
+wiped on your PC — deleted: true · residue: 0
+```
+
+The bridge talks only to `127.0.0.1`, needs the launch token on every request, and shuts the
+sandbox down when you press Ctrl-C. Nothing listens on the network; nobody else can drive your PC.
+
 ## The triage engine (what it catches)
 
 The [synthetic fixture](fixtures/sneaky-installer/) — written for this repo's tests, clearly

@@ -259,6 +259,39 @@ def cmd_run(args):
     return code
 
 
+def cmd_serve(args):
+    import bridge as bridge_mod
+    b = bridge_mod.Bridge()
+    try:
+        server = bridge_mod.serve(b, port=args.port)
+    except OSError as e:
+        print("could not bind 127.0.0.1:%d — %s" % (args.port, e))
+        print("is another `cleanroom serve` already running?")
+        return 2
+    port = server.server_address[1]
+    print("== cleanroom bridge ==")
+    print("  listening on  http://127.0.0.1:%d  (this machine only)" % port)
+    print("  launch token  %s" % b.token)
+    print()
+    print("  open https://amanvicky.github.io/cleanroom/ in your browser,")
+    print("  pick 'this PC' mode, and paste the token above.")
+    print()
+    print("  repos you run there will use the complete PC — real interpreter,")
+    print("  real processes — inside the cleanroom sandbox: scrubbed secrets,")
+    print("  no outbound network for python, timeout, and a verified wipe.")
+    print("  run things at your own responsibility. Ctrl-C stops the bridge.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nshutting down…")
+        audit = b.api_wipe()
+        if audit.get("was_open"):
+            print("  open session wiped [%s], residue: %d" % (
+                "ok" if audit.get("deleted") else "FAILED", audit.get("residue")))
+        server.shutdown()
+    return 0
+
+
 def _print_audit(sess, target):
     print("session summary")
     print("  repo        %s @ %s" % (target, getattr(sess, "commit", "?")))
@@ -285,6 +318,10 @@ def main(argv=None):
     run.add_argument("--timeout", type=int, default=120, help="per-command timeout seconds")
     run.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     run.set_defaults(func=cmd_run)
+
+    serve_p = sub.add_parser("serve", help="let the cleanroom web page drive THIS PC's sandbox")
+    serve_p.add_argument("--port", type=int, default=8641, help="localhost port (default 8641)")
+    serve_p.set_defaults(func=cmd_serve)
 
     args = ap.parse_args(argv)
     return args.func(args)

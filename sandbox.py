@@ -292,6 +292,9 @@ class Session:
                 self.child.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.child.kill()
+        stream = getattr(self, "active_stream", None)
+        if stream:
+            stream._done.wait(5)
         if self._timer:
             self._timer.cancel()
         deleted = False
@@ -314,3 +317,74 @@ class Session:
 def residue_count():
     tmp = tempfile.gettempdir()
     return len([n for n in os.listdir(tmp) if n.startswith("cleanroom-")])
+
+
+class StreamHandle:
+    """A running sandbox command whose output can be polled as it streams."""
+
+    def __init__(self, session, proc, buf, lock, done, result):
+        self._session = session
+        self._proc = proc
+        self._buf = buf
+        self._lock = lock
+        self._done = done
+        self._result = result
+
+    def lines_since(self, n):
+        with self._lock:
+            return list(self._buf[n:]), len(self._buf)
+
+    def poll(self):
+        return self._done.is_set(), self._result.get("code")
+
+    def wait(self, timeout=None):
+        self._done.wait(timeout)
+        return self.poll()
+
+    def kill(self):
+        _kill_tree(self._proc.pid)
+        self._done.wait(5)
+
+
+def execute_stream(self, cmd):
+    """Start one command inside the sandbox and return a StreamHandle whose
+    output arrives line by line. Only one streamed command at a time."""
+    if self.closed:
+        raise SandboxError("session is closed")
+    if getattr(self, "active_stream", None) and not self.active_stream.poll()[0]:
+        raise SandboxError("a command is already running")
+    env = self._child_env()
+    self.commands += 1
+    self.kill_reason = None
+    proc = subprocess.Popen(
+        cmd, cwd=os.path.join(self.dir, "repo"), env=env, shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, errors="replace",
+        start_new_session=(sys.platform != "win32"))
+    buf, lock, done, result = [], threading.Lock(), threading.Event(), {"code": None}
+
+    def _reader():
+        try:
+            for raw in proc.stdout:
+                with lock:
+                    buf.append(raw.rstrip("\r\n"))
+        finally:
+            result["code"] = proc.wait()
+            done.set()
+
+    threading.Thread(target=_reader, daemon=True).start()
+    self.child = proc
+
+    def _on_timeout():
+        self.kill_reason = "timeout (%ds)" % self.timeout
+        _kill_tree(proc.pid)
+
+    timer = threading.Timer(self.timeout, _on_timeout)
+    self._timer = timer
+    timer.start()
+    handle = StreamHandle(self, proc, buf, lock, done, result)
+    self.active_stream = handle
+    return handle
+
+
+Session.execute_stream = execute_stream

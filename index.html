@@ -25,6 +25,16 @@
     </nav>
 
     <section id="tab-run">
+      <div class="mode-row">
+        <label><input type="radio" name="runmode" value="vm" checked> in-tab VM</label>
+        <label><input type="radio" name="runmode" value="pc"> this PC — real processes</label>
+        <span class="mode-hint">this-PC mode needs <code>python cleanroom.py serve</code> running locally</span>
+      </div>
+      <div class="pc-row hidden" id="pcRow">
+        <input id="pcToken" placeholder="bridge token (shown by cleanroom serve)" spellcheck="false" autocomplete="off">
+        <button id="pcConnect">Connect</button>
+        <span id="pcSpecs"></span>
+      </div>
       <div class="input-row">
         <input id="liveUrl" type="text" spellcheck="false"
                placeholder="https://github.com/owner/repo" />
