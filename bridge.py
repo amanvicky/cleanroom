@@ -258,11 +258,20 @@ class _Handler(BaseHTTPRequestHandler):
         return self._reply({"ok": False, "error": "unknown endpoint"}, 404)
 
     def _log(self, msg):
-        print("  [%s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
+        try:
+            print("  [%s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
+        except OSError:
+            pass  # a broken console pipe must never break an API response
+
+
+class _Server(ThreadingHTTPServer):
+    # refuse to double-bind: on Windows SO_REUSEADDR lets a second server
+    # bind the same port silently and the two then race for connections
+    allow_reuse_address = False
 
 
 def serve(bridge, host="127.0.0.1", port=8641):
     _Handler.bridge = bridge
-    server = ThreadingHTTPServer((host, port), _Handler)
+    server = _Server((host, port), _Handler)
     server.daemon_threads = True
     return server
