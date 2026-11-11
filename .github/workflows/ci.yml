@@ -25,3 +25,4 @@ jobs:
       - run: pip install -e . pytest
       - run: python -m pytest tests/ -q
       - run: node parity-check.mjs
+      - run: node runner-check.mjs

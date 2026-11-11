@@ -38,6 +38,35 @@ head 0 attention weights (rows = attending position, cols = attended):
 Because the VM is a browser tab, "runs virtually without disturbing anything" is structural, not
 promised: the repo never sees your files, your environment variables, or your network.
 
+## The app screen: GUI apps run and can be used right there
+
+A REPL is for reading output. Many repos are **apps** — and the runner opens an **app screen**
+above the terminal so you use them there itself, not through print statements:
+
+- **Python GUI apps (tkinter)** — the runner ships a **virtual tkinter**: a subset of the tkinter
+  API rendered as **real HTML widgets** in the page. `run gui_notes.py` opens a window; buttons
+  click, entries type, listboxes fill, canvases draw — callbacks run in the VM while the terminal
+  stays live. Anything outside the subset (menus, file dialogs, images…) is counted and reported,
+  never silently faked.
+- **Static web apps (root `index.html`)** — type **`preview`**: the page and its scripts/styles are
+  inlined into a **sandboxed frame with no origin, no storage, no network**. It runs; nothing
+  escapes.
+- **Full-stack servers (Flask, Django, FastAPI, Rails, Node…)** — a server can't run inside a
+  browser tab. In **"this PC"** mode the bridge runs it as a **real process on your machine**,
+  the page detects the port it prints, and the app's **own UI** opens at `127.0.0.1:<port>` in
+  the app screen. `serve python app.py` → click the port chip → use the real app → **Stop** →
+  **wipe**, residue 0. Rails apps (like [we-promise/sure](https://github.com/we-promise/sure))
+  run this way if Ruby is installed on the machine — the honest path, not a pretending one.
+
+```
+GUI app detected (tkinter) — the virtual screen is ready
+repo> run gui_notes.py
+── app screen ── the window is open in the panel above; click it any time
+   (virtual tkinter: a subset rendered as real HTML widgets — the terminal stays live)
+```
+
+![App screen: a tkinter notes app rendered as HTML widgets above the terminal](docs/cleanroom-gui.png)
+
 ## The CLI sandbox (stronger isolation, real processes)
 
 For full control — including a **static triage report** before you run anything — the CLI runs the
@@ -151,6 +180,9 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 | control | how | where it works |
 |---|---|---|
 | browser VM isolation | WebAssembly tab, no disk, no sockets | everywhere, all repos (pure Python) |
+| **app screen — virtual tkinter** | a tkinter *subset* as HTML widgets; unsupported features are counted and named | browser VM |
+| **app screen — web preview** | sandboxed frame, inlined assets, no origin, no storage, no network | browser VM |
+| **app screen — real server UI** | this-PC bridge runs the app; the page embeds `127.0.0.1:<port>` | CLI bridge + this-PC mode |
 | **disposable venv** | `python -m venv` inside the sandbox — pip installs never touch the real Python | CLI + this-PC mode, all OSes |
 | ephemeral clone + wipe verification | `mkdtemp` → delete → residue re-scan | CLI, all OSes |
 | secret-scrubbed environment | whitelist env for children | CLI, all OSes |
@@ -161,6 +193,13 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 - The browser VM runs **pure-Python** code and Pyodide's wheel catalog; compiled extensions that
   aren't in that catalog can't load, `input()` isn't wired up, and an infinite loop freezes the
   tab (refresh recovers; nothing was saved anyway). Freeze/resume is a this-PC feature.
+- The **virtual tkinter is a subset**. Menus, file dialogs, images, colored text tags and a few
+  layout details don't render; every skipped feature is counted and named in the terminal.
+  A real tkinter needs Tcl/Tk — for the real window, run the repo in "this PC" mode or the CLI.
+- In this-PC web-app mode, **the app holds a real port open on your machine** — that's a server
+  doing its job, and cleanroom's network guard covers Python children only. The sandbox still
+  scrubs your secrets from the app's environment, and Stop + wipe still kill and erase everything;
+  but make sure your firewall blocks inbound connections.
 - A clean triage report means **"nothing obvious"**, not "safe". Static analysis can't see
   everything.
 - This is not a VM in the kernel sense. For genuinely hostile code, use a real isolating VM.
@@ -168,9 +207,10 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-20 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
-the scrub, the wipe, the timeout and the network guard — no mocks. CI runs the suite on **Ubuntu
-and Windows** (Python 3.10 + 3.12) plus the JS↔Python parity gate.
+34 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
+and wipes — no mocks. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
+JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers.
 
 ```bash
 python -m pytest tests/ -q

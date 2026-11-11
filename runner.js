@@ -4,15 +4,23 @@
 
    The VM lives in this tab's memory only: no server, no install, nothing on
    disk. Closing the tab wipes it. The VM has no sockets, so repo code cannot
-   make real network calls — that's the sandbox, for free. */
+   make real network calls — that's the sandbox, for free.
+
+   The app screen (a second panel above the terminal) renders GUI apps:
+     - Python/tkinter repos → the virtual tkinter shim (real HTML widgets)
+     - static web apps (index.html) → a sandboxed, origin-less iframe
+     - full-stack servers → "this PC" mode runs the real process via the
+       local bridge and the app's own UI opens at 127.0.0.1:<port> in-frame */
 
 import { fetchRepoFiles } from "./repo_fetch.js";
+import { detectGuiSignals, extractPorts } from "./runner_core.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 
 let pyodide = null;
 let vmLoading = null;
 let busy = false;
+let vmFiles = [];          // [[path, text]] of the last VM repo load
 
 const term = document.getElementById("term");
 const termInput = document.getElementById("termInput");
@@ -24,6 +32,19 @@ const pcRow = document.getElementById("pcRow");
 const pcToken = document.getElementById("pcToken");
 const pcConnect = document.getElementById("pcConnect");
 const pcSpecs = document.getElementById("pcSpecs");
+const appCard = document.getElementById("appCard");
+const appTitle = document.getElementById("appTitle");
+const appCloseBtn = document.getElementById("appCloseBtn");
+const appContent = document.getElementById("appContent");
+const webWrap = document.getElementById("webWrap");
+const webFrame = document.getElementById("webFrame");
+const webUrl = document.getElementById("webUrl");
+const pcWebRow = document.getElementById("pcWebRow");
+const pcWebCmd = document.getElementById("pcWebCmd");
+const pcWebNet = document.getElementById("pcWebNet");
+const pcWebStart = document.getElementById("pcWebStart");
+const pcWebStop = document.getElementById("pcWebStop");
+const pcWebChips = document.getElementById("pcWebChips");
 
 /* run mode: "vm" (WebAssembly in this tab) or "pc" (real processes via the
    localhost bridge started by `python cleanroom.py serve`) */
@@ -34,6 +55,7 @@ document.querySelectorAll('input[name="runmode"]').forEach(radio => {
   radio.addEventListener("change", () => {
     mode = document.querySelector('input[name="runmode"]:checked').value;
     pcRow.classList.toggle("hidden", mode !== "pc");
+    pcWebRow.classList.toggle("hidden", mode !== "pc" || !pcWebRow.dataset.shown);
     if (mode === "vm") {
       setLiveStatus(pyodide ? "in-tab VM — close the tab and nothing remains"
                             : "in-tab VM mode — the repo runs inside this browser tab");
@@ -112,6 +134,15 @@ function line(text, cls) {
   term.scrollTop = term.scrollHeight;
 }
 
+function hintChip(text) {
+  const el = document.createElement("div");
+  el.className = "tline t-hint";
+  el.textContent = "  " + text;
+  el.addEventListener("click", () => { termInput.value = text; termInput.focus(); });
+  term.appendChild(el);
+  term.scrollTop = term.scrollHeight;
+}
+
 function setLiveStatus(msg, isError) {
   liveStatus.textContent = msg;
   liveStatus.className = "status" + (isError ? " error" : "");
@@ -122,11 +153,13 @@ const HELP = [
   "  run <file.py>    execute a file from the repo (its output prints here)",
   "  ls               list the files loaded into the virtual machine",
   "  pip <package>    install a package into the VM (numpy, pandas, micropip wheels)",
+  "  preview          open a static web app (index.html) sandboxed in the app screen",
   "  clear            clear this terminal",
   "  wipe             erase everything: files, variables, modules — residue: 0",
   "  anything else    runs as Python in the repo's directory",
   "notes:",
   "  the VM has no network sockets — code cannot phone home",
+  "  tkinter apps render on the app screen (virtual tkinter: real HTML widgets, a subset)",
   "  input() is not wired up — assign values directly in code",
   "  an infinite loop freezes the tab — refresh to recover, nothing was saved anyway",
   "  closing this tab wipes the VM. nothing was ever written to your disk.",
@@ -162,6 +195,7 @@ async function ensureVM(onStatus) {
       py.setStdout({ batched: s => line(s, "t-out") });
       py.setStderr({ batched: s => line(s, "t-err") });
       await py.runPythonAsync(VM_SETUP);
+      await installShim(py);
       pyodide = py;
       return py;
     })();
@@ -169,12 +203,808 @@ async function ensureVM(onStatus) {
   return vmLoading;
 }
 
-function vmWriteFile(path, text) {
-  const full = "/repo/" + path;
-  const dir = full.slice(0, full.lastIndexOf("/"));
-  try { pyodide.FS.mkdirTree(dir); } catch (e) { /* exists */ }
-  pyodide.FS.writeFile(full, text, { encoding: "utf8" });
+/* ---------- the app screen: virtual tkinter + sandboxed web preview ---------- */
+
+let guiEv = null;          // PyProxy of builtins.__cr_gui_event (set by the shim)
+let shimSrc = null;
+let nextId = 1;
+const W = new Map();       // widget id → record
+let renderQueued = false;
+
+async function installShim(py) {
+  if (shimSrc === null) {
+    try {
+      shimSrc = await (await fetch(new URL("tkinter_shim.py", import.meta.url))).text();
+    } catch (e) {
+      shimSrc = "";
+      line("note: the virtual tkinter shim couldn't load (" + e.message + ") — GUI apps won't render", "t-dim");
+    }
+  }
+  if (!shimSrc) return;
+  py.FS.writeFile("/_cleanroom_tkinter_shim.py", shimSrc, { encoding: "utf8" });
+  await py.runPythonAsync(`
+import sys, types as _t
+_m = _t.ModuleType("tkinter"); _m.__path__ = []
+exec(compile(open("/_cleanroom_tkinter_shim.py", encoding="utf-8").read(),
+             "tkinter_shim.py", "exec"), _m.__dict__)
+_m._install_submodules(_m)
+sys.modules["tkinter"] = _m
+sys.modules["tkinter.constants"] = _m.constants
+sys.modules["tkinter.ttk"] = _m.ttk
+sys.modules["tkinter.messagebox"] = _m.messagebox
+sys.modules["tkinter.filedialog"] = _m.filedialog
+sys.modules["tkinter.simpledialog"] = _m.simpledialog
+del _m, _t
+`);
+  guiEv = py.runPython("__import__('builtins').__cr_gui_event");
 }
+
+function fire(id, name, data) {
+  if (!guiEv) return 0;
+  let pending = 0;
+  try {
+    pending = Number(guiEv(id, name, JSON.stringify(data || {}))) || 0;
+  } catch (e) {
+    line("gui callback error: " + e.message, "t-err");
+    return 0;
+  }
+  if (pending > 0) {
+    pyodide.runPythonAsync("import builtins as _b; await _b.__cr_gui_drain()")
+      .catch(e => line("gui async error: " + e.message, "t-err"));
+  }
+  return pending;
+}
+
+function div(cls) {
+  const el = document.createElement("div");
+  el.className = cls;
+  return el;
+}
+
+function reliefCss(relief) {
+  return { flat: "solid", groove: "groove", ridge: "ridge",
+           raised: "outset", sunken: "inset", solid: "solid" }[String(relief)] || "solid";
+}
+
+function margins(px, py) {
+  const x = Array.isArray(px) ? (px[0] || 0) : (px || 0);
+  const y = Array.isArray(py) ? (py[0] || 0) : (py || 0);
+  return y + "px " + x + "px";
+}
+
+function buildEl(rec) {
+  const p = rec.props;
+  let el;
+  if (rec.kind === "root" || rec.kind === "toplevel") {
+    el = div("tkwindow");
+    const bar = div("tkbar");
+    const title = document.createElement("span");
+    title.className = "tkbar-title";
+    title.textContent = p.title || "";
+    const close = document.createElement("button");
+    close.className = "tkclose";
+    close.textContent = "✕";
+    close.title = "close the window";
+    close.addEventListener("click", () => {
+      fire(rec.id, "wm_delete", {});
+      appCard.classList.add("hidden");
+    });
+    bar.appendChild(title);
+    bar.appendChild(close);
+    const body = div("tkbody");
+    el.appendChild(bar);
+    el.appendChild(body);
+    rec.body = body;
+    rec.titleEl = title;
+    return el;
+  }
+  switch (rec.kind) {
+    case "frame": el = div("tkframe"); break;
+    case "labelframe": {
+      el = document.createElement("fieldset");
+      el.className = "tkframe tkfieldset";
+      const legend = document.createElement("legend");
+      legend.textContent = p.text || "";
+      el.appendChild(legend);
+      break;
+    }
+    case "label": el = div("tklabel"); break;
+    case "button": {
+      el = document.createElement("button");
+      el.className = "tkbutton";
+      el.addEventListener("click", () => fire(rec.id, "command", {}));
+      break;
+    }
+    case "entry": {
+      el = document.createElement("input");
+      el.className = "tkentry";
+      el.type = p.show === "*" ? "password" : "text";
+      el.spellcheck = false;
+      el.addEventListener("input", () => fire(rec.id, "entry", { value: el.value }));
+      break;
+    }
+    case "text": {
+      el = document.createElement("textarea");
+      el.className = "tktext";
+      el.spellcheck = false;
+      break;
+    }
+    case "listbox": {
+      el = document.createElement("select");
+      el.className = "tklistbox";
+      el.size = Math.max(2, p.height || 10);
+      const mode = String(p.selectmode || "single");
+      if (mode === "multiple" || mode === "extended") el.multiple = true;
+      el.addEventListener("change", () => {
+        const indices = Array.from(el.options)
+          .map((o, i) => o.selected ? i : -1).filter(i => i >= 0);
+        fire(rec.id, "select", { indices });
+      });
+      break;
+    }
+    case "check": {
+      el = document.createElement("label");
+      el.className = "tkcheck";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.addEventListener("change", () => fire(rec.id, "command", { checked: cb.checked }));
+      const span = document.createElement("span");
+      span.textContent = p.text || "";
+      el.appendChild(cb);
+      el.appendChild(span);
+      rec.input = cb;
+      rec.span = span;
+      break;
+    }
+    case "radio": {
+      el = document.createElement("label");
+      el.className = "tkcheck";
+      const rb = document.createElement("input");
+      rb.type = "radio";
+      if (p.radioGroup) rb.name = p.radioGroup;
+      rb.addEventListener("change", () => fire(rec.id, "command", { checked: rb.checked, value: p.value }));
+      const span = document.createElement("span");
+      span.textContent = p.text || "";
+      el.appendChild(rb);
+      el.appendChild(span);
+      rec.input = rb;
+      rec.span = span;
+      break;
+    }
+    case "scale": {
+      el = document.createElement("input");
+      el.className = "tkscale";
+      el.type = "range";
+      el.min = p.from !== undefined ? p.from : 0;
+      el.max = p.to !== undefined ? p.to : 100;
+      el.step = p.resolution || 1;
+      if (p.value !== undefined) el.value = p.value;
+      if (p.orient === "vertical") el.style.writingMode = "vertical-lr";
+      el.addEventListener("input", () => fire(rec.id, "command", { value: Number(el.value) }));
+      break;
+    }
+    case "canvas": {
+      el = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      el.setAttribute("width", p.width || 300);
+      el.setAttribute("height", p.height || 200);
+      el.style.background = p.background || "#ffffff";
+      el.addEventListener("mousedown", ev => {
+        const r = el.getBoundingClientRect();
+        const sx = (Number(el.getAttribute("width")) || 300) / r.width;
+        const sy = (Number(el.getAttribute("height")) || 200) / r.height;
+        fire(rec.id, "click", { x: Math.round((ev.clientX - r.left) * sx),
+                                y: Math.round((ev.clientY - r.top) * sy) });
+      });
+      break;
+    }
+    case "scrollbar": el = div("tk-noscroll"); break;
+    case "menu": el = document.createComment("menu"); break;
+    default: el = div("tkframe");
+  }
+  return el;
+}
+
+function applyProps(rec) {
+  const el = rec.el, p = rec.props;
+  if (!el || el.nodeType !== 1) return;
+  if (rec.kind === "root" || rec.kind === "toplevel") {
+    if (p.title !== undefined && rec.titleEl) rec.titleEl.textContent = p.title;
+    if (p.winWidth) el.style.width = p.winWidth + "px";
+    if (p.winHeight) el.style.minHeight = p.winHeight + "px";
+    return;
+  }
+  if (p.background !== undefined && rec.kind !== "canvas") el.style.background = p.background;
+  if (p.color !== undefined) el.style.color = p.color;
+  if (p.font !== undefined) Object.assign(el.style, p.font);
+  if (p.relief !== undefined) {
+    el.style.borderStyle = reliefCss(p.relief);
+    el.style.borderWidth = (p.borderwidth !== undefined ? p.borderwidth : 1) + "px";
+    el.style.borderColor = "#8a97a8";
+  } else if (p.borderwidth !== undefined) {
+    el.style.borderWidth = p.borderwidth + "px";
+  }
+  if (p.justify !== undefined) el.style.textAlign = p.justify;
+  if (p.state === "disabled" && "disabled" in (rec.input || el)) (rec.input || el).disabled = true;
+  if (p.state && p.state !== "disabled" && rec.input) rec.input.disabled = false;
+  if (p.text !== undefined) {
+    if (rec.kind === "label") el.textContent = p.text;
+    else if (rec.kind === "button") el.textContent = p.text;
+    else if (rec.span) rec.span.textContent = p.text;
+  }
+  if (p.value !== undefined) {
+    if (rec.kind === "entry" && document.activeElement !== el) el.value = p.value;
+    if (rec.kind === "scale") el.value = p.value;
+    if (rec.kind === "radio" && rec.input) rec.input.checked = !!p.checked;
+  }
+  if (p.checked !== undefined && rec.input) rec.input.checked = !!p.checked;
+  if (p.show !== undefined && rec.kind === "entry") el.type = p.show === "*" ? "password" : "text";
+  if (p.wraplength !== undefined) el.style.maxWidth = p.wraplength + "px";
+  if (p.width !== undefined) {
+    if (rec.kind === "entry") el.size = p.width;
+    else if (rec.kind === "text") el.cols = p.width;
+    else el.style.width = p.width + "px";
+  }
+  if (p.height !== undefined) {
+    if (rec.kind === "text") el.rows = p.height;
+    else if (rec.kind === "listbox") el.size = Math.max(2, p.height);
+    else el.style.height = p.height + "px";
+  }
+  if (p.wrap !== undefined && rec.kind === "text") el.wrap = p.wrap === "none" ? "off" : "soft";
+}
+
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  queueMicrotask(renderAll);
+}
+
+function renderAll() {
+  renderQueued = false;
+  for (const rec of W.values()) {
+    if ((rec.kind === "root" || rec.kind === "toplevel") && rec.body) {
+      renderParent(rec.body, rec.kids);
+    } else if (rec.kind === "frame" || rec.kind === "labelframe") {
+      renderParent(rec.el, rec.kids);
+    }
+  }
+}
+
+function renderParent(container, kids) {
+  const packed = kids.filter(k => k.el && k.el.nodeType === 1 && (k.geo || null));
+  if (!packed.length) return;
+  const mode = packed[0].geo.mode;
+  if (mode === "pack") renderPack(container, kids);
+  else if (mode === "grid") renderGrid(container, kids);
+  else renderPlace(container, kids);
+}
+
+function renderPack(container, kids) {
+  const lanes = [];
+  const plain = [];
+  for (const rec of kids) {
+    if (!rec.el || rec.el.nodeType !== 1) continue;
+    if (!rec.geo) { plain.push(rec); continue; }
+    if (rec.geo.mode !== "pack") continue;
+    const side = rec.geo.side || "top";
+    const dir = (side === "left" || side === "right") ? "row" : "col";
+    const last = lanes[lanes.length - 1];
+    if (dir === "row" && last && last.dir === "row") last.items.push(rec);
+    else lanes.push({ dir, items: [rec] });
+  }
+  if (plain.length) lanes.push({ dir: "col", items: plain });
+  const frag = document.createDocumentFragment();
+  for (const lane of lanes) {
+    const laneEl = div("tklane " + (lane.dir === "row" ? "tkrow" : "tkcol"));
+    for (const rec of lane.items) {
+      laneEl.appendChild(rec.el);
+      stylePack(rec, lane.dir);
+    }
+    frag.appendChild(laneEl);
+  }
+  container.replaceChildren(frag);
+}
+
+function stylePack(rec, laneDir) {
+  const g = rec.geo || {};
+  const el = rec.el;
+  const expand = g.expand && g.expand !== "0";
+  el.style.flexGrow = expand ? "1" : "0";
+  el.style.margin = margins(g.padx, g.pady);
+  if (g.fill === "x" && laneDir === "col") el.style.width = "100%";
+  if (g.fill === "y" && laneDir === "row") el.style.height = "100%";
+  if (g.fill === "both") { el.style.width = "100%"; }
+  const anchor = String(g.anchor || "");
+  if (anchor.includes("n") && !anchor.includes("s")) el.style.alignSelf = "flex-start";
+  else if (anchor.includes("s") && !anchor.includes("n")) el.style.alignSelf = "flex-end";
+  else if (anchor === "center") el.style.alignSelf = "center";
+  if (expand && laneDir === "row") el.style.alignSelf = "stretch";
+}
+
+function renderGrid(container, kids) {
+  let cols = 1;
+  for (const rec of kids) {
+    if (!rec.el || rec.el.nodeType !== 1 || !rec.geo) continue;
+    const c = (rec.geo.column || 0) + (rec.geo.columnspan || 1);
+    if (c > cols) cols = c;
+  }
+  container.style.display = "grid";
+  container.style.gridTemplateColumns = "repeat(" + cols + ", minmax(0, auto))";
+  container.style.gap = "4px";
+  const frag = document.createDocumentFragment();
+  for (const rec of kids) {
+    if (!rec.el || rec.el.nodeType !== 1) continue;
+    const g = rec.geo;
+    if (g.mode !== "grid") { frag.appendChild(rec.el); continue; }
+    rec.el.style.gridColumn = ((g.column || 0) + 1) + " / span " + (g.columnspan || 1);
+    rec.el.style.gridRow = ((g.row || 0) + 1) + " / span " + (g.rowspan || 1);
+    const sticky = String(g.sticky || "").toLowerCase();
+    if (sticky.includes("e") && sticky.includes("w")) rec.el.style.justifySelf = "stretch";
+    else if (sticky.includes("w")) rec.el.style.justifySelf = "start";
+    else if (sticky.includes("e")) rec.el.style.justifySelf = "end";
+    if (sticky.includes("n") && sticky.includes("s")) rec.el.style.alignSelf = "stretch";
+    else if (sticky.includes("n")) rec.el.style.alignSelf = "start";
+    else if (sticky.includes("s")) rec.el.style.alignSelf = "end";
+    rec.el.style.margin = margins(g.padx, g.pady);
+    frag.appendChild(rec.el);
+  }
+  container.replaceChildren(frag);
+}
+
+function renderPlace(container, kids) {
+  container.style.position = "relative";
+  const frag = document.createDocumentFragment();
+  for (const rec of kids) {
+    if (!rec.el || rec.el.nodeType !== 1) continue;
+    const g = rec.geo;
+    if (g.mode !== "place") { frag.appendChild(rec.el); continue; }
+    rec.el.style.position = "absolute";
+    rec.el.style.left = g.rely !== undefined && g.relx !== undefined
+      ? "calc(" + g.relx * 100 + "%)" : (g.x !== undefined ? g.x + "px" : "0px");
+    rec.el.style.top = g.rely !== undefined
+      ? "calc(" + g.rely * 100 + "%)" : (g.y !== undefined ? g.y + "px" : "0px");
+    if (g.width) rec.el.style.width = g.width + "px";
+    if (g.height) rec.el.style.height = g.height + "px";
+    frag.appendChild(rec.el);
+  }
+  container.replaceChildren(frag);
+}
+
+/* canvas → SVG */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgItem(kind, coords, opts) {
+  const n = v => Number(v) || 0;
+  let el = null;
+  if (kind === "line") {
+    el = document.createElementNS(SVG_NS, "line");
+    el.setAttribute("x1", n(coords[0])); el.setAttribute("y1", n(coords[1]));
+    el.setAttribute("x2", n(coords[2])); el.setAttribute("y2", n(coords[3]));
+    el.setAttribute("stroke", opts.outline || opts.fill || "#111");
+    el.setAttribute("stroke-width", n(opts.width) || 1);
+  } else if (kind === "rectangle") {
+    el = document.createElementNS(SVG_NS, "rect");
+    el.setAttribute("x", Math.min(n(coords[0]), n(coords[2])));
+    el.setAttribute("y", Math.min(n(coords[1]), n(coords[3])));
+    el.setAttribute("width", Math.abs(n(coords[2]) - n(coords[0])));
+    el.setAttribute("height", Math.abs(n(coords[3]) - n(coords[1])));
+    el.setAttribute("fill", opts.fill || "none");
+    el.setAttribute("stroke", opts.outline || "#111");
+    el.setAttribute("stroke-width", n(opts.width) || 1);
+  } else if (kind === "oval") {
+    el = document.createElementNS(SVG_NS, "ellipse");
+    el.setAttribute("cx", (n(coords[0]) + n(coords[2])) / 2);
+    el.setAttribute("cy", (n(coords[1]) + n(coords[3])) / 2);
+    el.setAttribute("rx", Math.abs(n(coords[2]) - n(coords[0])) / 2);
+    el.setAttribute("ry", Math.abs(n(coords[3]) - n(coords[1])) / 2);
+    el.setAttribute("fill", opts.fill || "none");
+    el.setAttribute("stroke", opts.outline || "#111");
+    el.setAttribute("stroke-width", n(opts.width) || 1);
+  } else if (kind === "polygon") {
+    el = document.createElementNS(SVG_NS, "polygon");
+    el.setAttribute("points", coords.map(n).join(","));
+    el.setAttribute("fill", opts.fill || "none");
+    el.setAttribute("stroke", opts.outline || "#111");
+  } else if (kind === "text") {
+    el = document.createElementNS(SVG_NS, "text");
+    el.setAttribute("x", n(coords[0]));
+    el.setAttribute("y", n(coords[1]));
+    el.setAttribute("fill", opts.fill || "#111");
+    el.setAttribute("font-size", n(opts.fontSize) || 12);
+    el.textContent = opts.text || "";
+  } else if (kind === "arc") {
+    const cx = (n(coords[0]) + n(coords[2])) / 2, cy = (n(coords[1]) + n(coords[3])) / 2;
+    const rx = Math.abs(n(coords[2]) - n(coords[0])) / 2, ry = Math.abs(n(coords[3]) - n(coords[1])) / 2;
+    const a0 = (n(opts.start) || 0) * Math.PI / 180;
+    const a1 = a0 + (n(opts.extent) || 90) * Math.PI / 180;
+    const x0 = cx + rx * Math.cos(a0), y0 = cy + ry * Math.sin(a0);
+    const x1 = cx + rx * Math.cos(a1), y1 = cy + ry * Math.sin(a1);
+    el = document.createElementNS(SVG_NS, "path");
+    const large = Math.abs(n(opts.extent) || 90) > 180 ? 1 : 0;
+    const sweep = (n(opts.extent) || 90) >= 0 ? 1 : 0;
+    let d = "M " + x0 + " " + y0 + " A " + rx + " " + ry + " 0 " + large + " " + sweep + " " + x1 + " " + y1;
+    if (opts.style === "pieslice") d += " L " + cx + " " + cy + " Z";
+    el.setAttribute("d", d);
+    el.setAttribute("fill", opts.style === "pieslice" ? (opts.fill || "none") : "none");
+    el.setAttribute("stroke", opts.outline || "#111");
+    el.setAttribute("stroke-width", n(opts.width) || 1);
+  }
+  return el;
+}
+
+function patchSvg(el, opts) {
+  if (!el) return;
+  if (opts.fill !== undefined) el.setAttribute("fill", opts.fill);
+  if (opts.outline !== undefined) el.setAttribute("stroke", opts.outline);
+  if (opts.width !== undefined) el.setAttribute("stroke-width", Number(opts.width) || 1);
+  if (opts.text !== undefined) el.textContent = opts.text;
+  if (opts.fontSize !== undefined) el.setAttribute("font-size", Number(opts.fontSize) || 12);
+}
+
+function guiApiImpl() {
+  return {
+    show(title) {
+      appCard.classList.remove("hidden");
+      if (title) appTitle.textContent = title + " — app screen (virtual tkinter)";
+    },
+    hide() { appCard.classList.add("hidden"); },
+    reset() {
+      W.clear();
+      appContent.replaceChildren();
+      nextId = 1;
+      appCard.classList.add("hidden");
+      webWrap.classList.add("hidden");
+      webFrame.removeAttribute("srcdoc");
+      webFrame.src = "about:blank";
+      guiEv = null;
+    },
+    create(parentId, kind, propsJson) {
+      const id = nextId++;
+      let props = {};
+      try { props = JSON.parse(propsJson || "{}"); } catch (e) { /* keep {} */ }
+      const rec = { id, kind, props, parent: parentId, el: null, geo: null, kids: [], items: new Map(), nextItem: 1 };
+      rec.el = buildEl(rec);
+      W.set(id, rec);
+      const p = W.get(parentId);
+      if (p && p.body) p.body.appendChild(rec.el);
+      else if (p && p.el && p.el.nodeType === 1) p.el.appendChild(rec.el);
+      else if (rec.kind === "root" || rec.kind === "toplevel") appContent.appendChild(rec.el);
+      applyProps(rec);
+      scheduleRender();
+      return id;
+    },
+    config(id, propsJson) {
+      const rec = W.get(id);
+      if (!rec) return;
+      try { Object.assign(rec.props, JSON.parse(propsJson || "{}")); } catch (e) { /* keep */ }
+      applyProps(rec);
+      scheduleRender();
+    },
+    layout(id, geoJson) {
+      const rec = W.get(id);
+      if (!rec) return;
+      try { rec.geo = JSON.parse(geoJson || "{}"); } catch (e) { rec.geo = null; }
+      scheduleRender();
+    },
+    remove(id) {
+      const rec = W.get(id);
+      if (!rec) return;
+      rec.el && rec.el.remove && rec.el.remove();
+      W.delete(id);
+      scheduleRender();
+    },
+    after(ms, cb) { setTimeout(() => fire(0, "after", { cb }), Math.max(0, ms)); },
+    value(id) {
+      const rec = W.get(id);
+      if (!rec || !rec.el) return "";
+      return String(rec.el.value ?? "");
+    },
+    entryInsert(id, index, text) {
+      const rec = W.get(id);
+      if (!rec) return;
+      const v = rec.el.value || "";
+      if (String(index) === "end") rec.el.value = v + text;
+      else {
+        const at = Math.min(Math.max(parseInt(index, 10) || 0, 0), v.length);
+        rec.el.value = v.slice(0, at) + text + v.slice(at);
+      }
+    },
+    entryDelete(id, first, last) {
+      const rec = W.get(id);
+      if (!rec) return;
+      const v = rec.el.value || "";
+      const a = Math.min(Math.max(parseInt(first, 10) || 0, 0), v.length);
+      const b = (last === null || last === undefined || String(last) === "end")
+        ? v.length : Math.min(Math.max(parseInt(last, 10) || 0, 0), v.length);
+      rec.el.value = v.slice(0, Math.min(a, b)) + v.slice(Math.max(a, b));
+    },
+    textSet(id, t) {
+      const rec = W.get(id);
+      if (rec) rec.el.value = t;
+    },
+    textAppend(id, t) {
+      const rec = W.get(id);
+      if (!rec) return;
+      rec.el.value += t;
+      rec.el.scrollTop = rec.el.scrollHeight;
+    },
+    list(id, op, payloadJson) {
+      const rec = W.get(id);
+      if (!rec || !rec.el) return op === "get" ? [] : (op === "cur" ? [] : (op === "size" ? 0 : 0));
+      const el = rec.el;
+      let p = {};
+      try { p = JSON.parse(payloadJson || "{}"); } catch (e) { /* keep {} */ }
+      if (op === "insert") {
+        let at = el.options.length;
+        const idx = String(p.index ?? "end");
+        if (/^\d+$/.test(idx)) at = Math.min(parseInt(idx, 10), el.options.length);
+        for (const t of (p.items || [])) {
+          const o = document.createElement("option");
+          o.value = t;
+          o.textContent = t;
+          el.insertBefore(o, el.options[at] || null);
+          at++;
+        }
+        return 0;
+      }
+      if (op === "delete") {
+        const a = String(p.first);
+        if (/^end/.test(String(p.last ?? "end")) || p.last === null) {
+          const from = /^\d+$/.test(a) ? parseInt(a, 10) : 0;
+          Array.from(el.options).slice(from).forEach(o => o.remove());
+        } else {
+          const from = /^\d+$/.test(a) ? parseInt(a, 10) : 0;
+          const to = parseInt(String(p.last), 10);
+          Array.from(el.options).slice(from, to + 1).forEach(o => o.remove());
+        }
+        return 0;
+      }
+      if (op === "get") return Array.from(el.options).map(o => o.textContent);
+      if (op === "cur") {
+        return Array.from(el.options).map((o, i) => o.selected ? i : -1).filter(i => i >= 0);
+      }
+      if (op === "size") return el.options.length;
+      if (op === "select") {
+        Array.from(el.options).forEach((o, i) => {
+          o.selected = i >= p.first && (p.to === null || p.to === undefined || i <= p.to);
+        });
+        return 0;
+      }
+      if (op === "clearsel") {
+        Array.from(el.options).forEach(o => { o.selected = false; });
+        return 0;
+      }
+      if (op === "see") {
+        if (el.options[p.index]) el.selectedIndex = p.index;
+        return 0;
+      }
+      return 0;
+    },
+    canvas(id, op, payloadJson) {
+      const rec = W.get(id);
+      if (!rec || !rec.el) return 0;
+      const svg = rec.el;
+      let p = {};
+      try { p = JSON.parse(payloadJson || "{}"); } catch (e) { /* keep {} */ }
+      if (op.startsWith("create_")) {
+        const el = svgItem(op.slice(7), p.coords || [], p.opts || {});
+        if (!el) return 0;
+        const itemId = rec.nextItem++;
+        el.dataset.item = String(itemId);
+        const tags = (p.opts && p.opts.tags) || [];
+        if (tags.length) el.dataset.tags = tags.join(" ");
+        svg.appendChild(el);
+        rec.items.set(itemId, el);
+        return itemId;
+      }
+      if (op === "itemconfig") { patchSvg(rec.items.get(p.item), p.opts || {}); return 0; }
+      if (op === "delete") {
+        for (const it of (p.items && p.items.length ? p.items : ["all"])) {
+          if (it === "all") { svg.replaceChildren(); rec.items.clear(); }
+          else if (/^\d+$/.test(String(it))) {
+            const el = rec.items.get(Number(it));
+            if (el) { el.remove(); rec.items.delete(Number(it)); }
+          } else {
+            for (const [k, el] of Array.from(rec.items)) {
+              if ((el.dataset.tags || "").split(" ").includes(String(it))) {
+                el.remove(); rec.items.delete(k);
+              }
+            }
+          }
+        }
+        return 0;
+      }
+      if (op === "move") {
+        const el = rec.items.get(p.item);
+        if (el) {
+          const dx = (+el.dataset.dx || 0) + Number(p.dx || 0);
+          const dy = (+el.dataset.dy || 0) + Number(p.dy || 0);
+          el.dataset.dx = String(dx); el.dataset.dy = String(dy);
+          el.setAttribute("transform", "translate(" + dx + " " + dy + ")");
+        }
+        return 0;
+      }
+      if (op === "coords") {
+        const el = rec.items.get(p.item);
+        if (el) {
+          const c = (p.coords || []).map(Number);
+          if (el.tagName === "line") {
+            el.setAttribute("x1", c[0]); el.setAttribute("y1", c[1]);
+            el.setAttribute("x2", c[2]); el.setAttribute("y2", c[3]);
+          } else if (el.tagName === "polygon") {
+            el.setAttribute("points", c.join(","));
+          } else {
+            el.setAttribute("x", c[0]); el.setAttribute("y", c[1]);
+          }
+        }
+        return 0;
+      }
+      if (op === "bind_click") { svg.style.cursor = "pointer"; return 0; }
+      return 0;
+    },
+    dialog(kind, title, msg) {
+      appCard.classList.remove("hidden");
+      const ov = div("tkdialog");
+      const box = div("tkdialog-box");
+      const icon = div("tkdialog-icon " + kind);
+      icon.textContent = kind === "error" ? "✖" : kind === "warning" ? "⚠" : "ℹ";
+      const text = div("tkdialog-text");
+      text.textContent = (title ? title + "\n" : "") + msg;
+      const btn = document.createElement("button");
+      btn.textContent = "OK";
+      btn.addEventListener("click", () => ov.remove());
+      box.appendChild(icon);
+      box.appendChild(text);
+      box.appendChild(btn);
+      ov.appendChild(box);
+      appCard.appendChild(ov);
+    },
+  };
+}
+window.__cleanroomGui = guiApiImpl();
+
+/* static web preview: inline every repo-local script/stylesheet into the
+   entry HTML, then load it in an origin-less sandboxed iframe. No fetches
+   happen inside the frame — it has no origin to fetch from. */
+function vmPreview() {
+  const html = vmFiles.find(f => f[0] === "index.html");
+  if (!html) { line("no index.html at the repo root — nothing to preview", "t-dim"); return; }
+  const byPath = new Map(vmFiles);
+  const seen = new Set();
+  const inlined = [];
+  const local = path => {
+    if (!path || /^(https?:)?\/\//i.test(path) || path.startsWith("data:")) return null;
+    const key = path.replace(/^\.\//, "");
+    if (!byPath.has(key) || seen.has(key)) return null;
+    seen.add(key);
+    inlined.push(key);
+    return byPath.get(key);
+  };
+  let doc = html[1];
+  doc = doc.replace(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (m, src) => {
+    const t = local(src);
+    if (t === null) return m;
+    return "<script>\n" + t.replace(/<\/script/gi, "<\\/script") + "\n</script>";
+  });
+  doc = doc.replace(/<link\b[^>]*rel=["']?stylesheet["']?[^>]*>/gi, m => {
+    const href = /href=["']([^"']+)["']/i.exec(m);
+    if (!href) return m;
+    const t = local(href[1]);
+    if (t === null) return m;
+    return "<style>\n" + t + "\n</style>";
+  });
+  if (doc.length > 4 * 1024 * 1024) {
+    line("preview: the entry page and its assets are over 4 MB — too big to inline here", "t-err");
+    return;
+  }
+  webFrame.removeAttribute("src");
+  webFrame.srcdoc = doc;
+  webWrap.classList.remove("hidden");
+  appCard.classList.remove("hidden");
+  appTitle.textContent = "app screen — preview (sandboxed frame, no origin, no storage)";
+  if (inlined.length) line("preview: inlined " + inlined.join(", "), "t-dim");
+  line("the preview frame runs scripts but has no origin, no storage and no network — nothing escapes it", "t-dim");
+}
+
+/* ---------- this-PC mode: run the repo as a real web app ---------- */
+
+let webPolling = false;
+
+function showPcWebRow() {
+  pcWebRow.dataset.shown = "1";
+  pcWebRow.classList.remove("hidden");
+}
+
+function renderPcWebChips(hints) {
+  pcWebChips.innerHTML = "";
+  for (const h of hints) {
+    const b = document.createElement("button");
+    b.className = "chip env";
+    b.textContent = h.label;
+    b.title = h.cmd;
+    b.addEventListener("click", () => {
+      pcWebCmd.value = h.cmd;
+      pcWebNet.checked = !!h.net;
+    });
+    pcWebChips.appendChild(b);
+  }
+}
+
+function addPortChip(port) {
+  if (pcWebChips.querySelector('[data-port="' + port + '"]')) return;
+  const b = document.createElement("button");
+  b.className = "chip env";
+  b.dataset.port = String(port);
+  b.textContent = "open 127.0.0.1:" + port;
+  b.addEventListener("click", () => {
+    webFrame.removeAttribute("srcdoc");
+    webFrame.src = "http://127.0.0.1:" + port;
+    webUrl.textContent = "http://127.0.0.1:" + port + " — the app's own UI, served by your PC";
+  });
+  pcWebChips.appendChild(b);
+}
+
+async function pcWebStartFn() {
+  if (mode !== "pc") return;
+  const cmd = pcWebCmd.value.trim();
+  if (!cmd) { line("enter a start command first (a suggestion above fills it in)", "t-dim"); return; }
+  const net = pcWebNet.checked ? "allowed" : "blocked";
+  line("── starting the app on this PC (inside the sandbox): " + cmd, "t-meta");
+  const { data } = await bridgeCall("/api/web", { cmd, net });
+  if (!data.ok) {
+    line("bridge: " + data.error + (data.needs_approval ? " — type 'approve' first" : ""), "t-err");
+    return;
+  }
+  if (data.reopened) line("sandbox re-opened with network " + net + " — installs and downloads need it", "t-dim");
+  line("the app runs as a real process in the sandbox; its output streams below.", "t-dim");
+  line("when it prints a port, click the chip — the app's own UI opens in the app screen.", "t-dim");
+  line("honest note: cleanroom's network guard covers Python children only, and a server must hold its port open to serve you — that part is the app doing its job. Check that your firewall blocks inbound connections.", "t-dim");
+  webWrap.classList.remove("hidden");
+  appCard.classList.remove("hidden");
+  appTitle.textContent = "app screen — this PC app";
+  webUrl.textContent = "waiting for the server to print a port…";
+  webFrame.removeAttribute("srcdoc");
+  webFrame.src = "about:blank";
+  pcWebStart.classList.add("hidden");
+  pcWebStop.classList.remove("hidden");
+  webPolling = true;
+  pollWebOutput(0);
+}
+
+async function pollWebOutput(cursor) {
+  while (webPolling) {
+    let out;
+    try { out = await bridgeCall("/api/output?since=" + cursor); }
+    catch (e) { line("bridge error: " + e.message, "t-err"); break; }
+    const data = out.data;
+    if (!data.ok) { line("bridge: " + (data.error || "lost session"), "t-err"); break; }
+    for (const ln of data.lines) {
+      line(ln, "t-out");
+      for (const p of extractPorts([ln])) addPortChip(p);
+    }
+    cursor = data.cursor;
+    if (data.done) {
+      webPolling = false;
+      line("app process exited (code " + data.exit_code + ")" +
+           (data.kill_reason ? " — " + data.kill_reason : ""), "t-dim");
+      pcWebStop.classList.add("hidden");
+      pcWebStart.classList.remove("hidden");
+      break;
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+}
+
+async function pcWebStopFn() {
+  webPolling = false;
+  const { data } = await bridgeCall("/api/web_stop", {});
+  line(data.stopped
+    ? "stopped — the process tree was killed. the sandbox still exists; run 'wipe' to erase everything."
+    : "nothing is running", "t-meta");
+  pcWebStop.classList.add("hidden");
+  pcWebStart.classList.remove("hidden");
+}
+
+/* ---------- repo loading ---------- */
 
 function listRepoFiles() {
   const out = [];
@@ -240,21 +1070,27 @@ async function vmLoadRepo(raw) {
   for (const f of runnable.concat(runnableDeep)) vmWriteFile(f[0], f[1]);
   await vm.runPythonAsync("import sys; sys.modules.pop('repo', None)");
 
+  vmFiles = files;
   line("── loaded " + label + " ──", "t-meta");
   line(runnable.length + runnableDeep.length + " files → /repo (virtual, in-memory only)", "t-dim");
   line("on your device: " + deviceInfo(), "t-dim");
+  const sig = detectGuiSignals(files);
+  if (sig.tkinter) {
+    line("GUI app detected (tkinter) — the virtual screen is ready", "t-meta");
+    hintChip("run " + sig.entry);
+  }
+  if (sig.webapp) {
+    line("static web app detected — it opens sandboxed in the app screen", "t-meta");
+    hintChip("preview");
+  }
+  if (sig.rails) {
+    line("Ruby on Rails app — the in-tab VM is Python-only. In 'this PC' mode (with Ruby installed), 'Start app' runs it on your machine and its real UI opens in the app screen.", "t-dim");
+  }
   line("the VM is yours. type a command, or 'help'.", "t-dim");
   const hints = suggestCommands(files);
-  if (hints.length) {
+  if (hints.length && !sig.tkinter) {
     line("try: (click to fill)", "t-hint");
-    hints.slice(0, 3).forEach(h => {
-      const el = document.createElement("div");
-      el.className = "tline t-hint";
-      el.textContent = "  " + h;
-      el.addEventListener("click", () => { termInput.value = h; termInput.focus(); });
-      term.appendChild(el);
-    });
-    term.scrollTop = term.scrollHeight;
+    hints.slice(0, 3).forEach(h => hintChip(h));
   }
   setLiveStatus("running — " + label + " is live in your browser (" +
     Math.round(performance.now() - started) / 1000 + "s to boot, VM cached for next time)");
@@ -266,6 +1102,7 @@ const PC_HELP = [
   "  run <file.py>    execute a file from the repo on this machine",
   "  ls               list the sandbox clone",
   "  pip <package>    installs go into the sandbox's disposable venv — PyPI downloads need network, which is blocked by design",
+  "  serve <cmd>      run the repo as a real app (server) — its UI opens in the app screen; 'stop' ends it",
   "  save <name>      FREEZE this stage: files + package list → ~/.cleanroom/saves/<name>",
   "  stages           list saved stage freezes",
   "  resume <name>    wipe this sandbox, re-open a saved stage (files restored)",
@@ -300,8 +1137,23 @@ async function pcLoadRepo(raw) {
     line("this triaged DANGEROUS — type 'approve' if you still want to run it (at your own responsibility)", "t-err");
   } else {
     line("sandbox ready on your PC: scrubbed secrets, disposable venv (pip never touches your real Python), no outbound network (python), wiped on exit", "t-dim");
-    line("type python, 'run <file>', or 'help'", "t-dim");
   }
+  const hints = [];
+  if (data.tkinter_entry) {
+    line("GUI app detected (tkinter) — on this PC it opens a real window on your desktop:", "t-meta");
+    hintChip("run " + data.tkinter_entry);
+  }
+  const sig = detectGuiSignals((data.paths || []).map(p => [p, ""]));
+  if (sig.rails) {
+    line("Ruby on Rails app — 'Start app' below runs it here if Ruby is installed on this machine.", "t-dim");
+  }
+  if (sig.hints.length) {
+    line("run it as a real app (its UI opens in the app screen):", "t-meta");
+    renderPcWebChips(sig.hints);
+    hints.push(...sig.hints);
+  }
+  if (data.tkinter_entry || sig.hints.length) showPcWebRow();
+  if (!data.needs_approval) line("type python, 'run <file>', 'serve <cmd>', or 'help'", "t-dim");
   setLiveStatus("this-PC session live — real processes on your machine, wiped clean on exit");
   termInput.focus();
 }
@@ -348,10 +1200,24 @@ async function pcExec(text) {
          data.ok ? "t-meta" : "t-dim");
     return;
   }
+  if (c === "stop") { await pcWebStopFn(); return; }
+  if (c.startsWith("serve ")) {
+    pcWebCmd.value = c.slice(6).trim();
+    await pcWebStartFn();
+    return;
+  }
   if (c === "wipe") {
+    webPolling = false;
     const { data } = await bridgeCall("/api/wipe", {});
     line("wiped on your PC — deleted: " + data.deleted + " · residue: " + data.residue +
          " · commands run: " + (data.commands || 0) + " · nothing was written outside the sandbox", "t-meta");
+    appCard.classList.add("hidden");
+    webWrap.classList.add("hidden");
+    webFrame.removeAttribute("srcdoc");
+    webFrame.src = "about:blank";
+    pcWebChips.innerHTML = "";
+    pcWebStop.classList.add("hidden");
+    pcWebStart.classList.remove("hidden");
     renderStageChips();
     return;
   }
@@ -398,7 +1264,7 @@ async function pcExec(text) {
     return;
   }
   if (c === "ls") {
-    listRepoFiles().forEach(f => line(f, "t-dim"));
+    line("(this-PC mode — the clone lives in the sandbox; use 'run <file>' or the app screen)", "t-dim");
     return;
   }
   const runMatch = c.match(/^run\s+(\S+)$/);
@@ -436,6 +1302,12 @@ async function execLine(raw) {
   if (cmd === "clear") { term.innerHTML = ""; return; }
   if (cmd === "help" || cmd === "?") { HELP.forEach(l => line(l, "t-dim")); return; }
   if (cmd === "wipe") { await wipeVM(); return; }
+  if (cmd === "preview") { vmPreview(); return; }
+  if (cmd === "screen") {
+    if (W.size) { appCard.classList.remove("hidden"); }
+    else line("no window yet — run the repo's GUI entry (e.g. 'run gui_notes.py')", "t-dim");
+    return;
+  }
   if (cmd === "stages" || cmd.startsWith("save ") || cmd.startsWith("resume ") || cmd.startsWith("forget ")) {
     line("freeze/resume is a this-PC feature — the in-tab VM dies with this tab, so there is nothing to save here", "t-dim");
     return;
@@ -529,8 +1401,18 @@ os.makedirs("/repo", exist_ok=True)
 del _keep, _m, _k
 `);
   await pyodide.runPythonAsync(VM_SETUP);
+  await installShim(pyodide);
+  window.__cleanroomGui.reset();
+  vmFiles = [];
   line("wiped — files, variables and modules erased. residue: 0. nothing was ever on your disk.", "t-meta");
   line("load another repo with the box above, or keep going with plain python.", "t-dim");
+}
+
+function vmWriteFile(path, text) {
+  const full = "/repo/" + path;
+  const dir = full.slice(0, full.lastIndexOf("/"));
+  try { pyodide.FS.mkdirTree(dir); } catch (e) { /* exists */ }
+  pyodide.FS.writeFile(full, text, { encoding: "utf8" });
 }
 
 loadBtn.addEventListener("click", () => loadRepo(liveUrl.value));
@@ -550,4 +1432,11 @@ document.querySelectorAll("button[data-live-preset]").forEach(btn => {
     liveUrl.value = btn.dataset.livePreset;
     loadRepo(btn.dataset.livePreset);
   });
+});
+appCloseBtn.addEventListener("click", () => appCard.classList.add("hidden"));
+pcWebStart.addEventListener("click", pcWebStartFn);
+pcWebStop.addEventListener("click", pcWebStopFn);
+document.getElementById("wipeBtn").addEventListener("click", () => {
+  if (mode === "pc") pcExec("wipe");
+  else wipeVM();
 });

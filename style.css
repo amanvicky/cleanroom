@@ -239,6 +239,209 @@ h2 {
 
 .note { color: var(--dim); font-style: italic; margin-top: 10px; }
 
+/* ---------- the app screen ---------- */
+.appcard { position: relative; }
+.apphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.apptitle {
+  color: var(--accent);
+  font: 600 14px "Cascadia Mono", Consolas, monospace;
+}
+.apphead button {
+  background: #0b111a;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.apphead button:hover { color: var(--red); border-color: #6b2727; }
+.appcontent { display: flex; flex-direction: column; gap: 8px; }
+
+.tkwindow {
+  background: #141b26;
+  border: 1px solid #2a3846;
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: 100%;
+}
+.tkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1a2330;
+  padding: 6px 12px;
+  border-bottom: 1px solid #2a3846;
+}
+.tkbar-title {
+  font: 600 13px "Segoe UI", system-ui, sans-serif;
+  color: #e8eef4;
+}
+.tkclose {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.tkclose:hover { color: var(--red); }
+.tkbody {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 60px;
+}
+.tklane.tkcol { display: flex; flex-direction: column; gap: 4px; }
+.tklane.tkrow { display: flex; flex-direction: row; gap: 6px; align-items: center; }
+.tkframe { min-width: 0; }
+.tkfieldset { border: 1px solid #2a3846; border-radius: 8px; padding: 8px; }
+.tkfieldset legend { color: var(--dim); font-size: 12.5px; padding: 0 6px; }
+.tklabel { color: #e8eef4; font-size: 14px; }
+.tkbutton {
+  background: #1d3d33;
+  color: var(--accent);
+  border: 1px solid #1d5c4d;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font: 600 13.5px "Segoe UI", system-ui, sans-serif;
+  width: fit-content;
+}
+.tkbutton:hover { background: #254d40; }
+.tkentry, .tktext {
+  background: #060a10;
+  color: #e8eef4;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font: 13.5px "Cascadia Mono", Consolas, monospace;
+  outline: none;
+}
+.tkentry:focus, .tktext:focus { border-color: var(--accent); }
+.tklistbox {
+  background: #060a10;
+  color: #e8eef4;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px;
+  font: 13.5px "Cascadia Mono", Consolas, monospace;
+}
+.tkcheck {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #e8eef4;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tkcheck input { accent-color: var(--accent); }
+.tkscale { accent-color: var(--accent); max-width: 320px; }
+.tk-noscroll { display: none; }
+.tk-disabled { opacity: 0.5; }
+
+.webbar {
+  color: var(--dim);
+  font: 12.5px "Cascadia Mono", Consolas, monospace;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+#webFrame {
+  width: 100%;
+  height: 460px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.pc-web {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pc-web.hidden { display: none; }
+.web-ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.web-ctl input[type="text"], .web-ctl input:not([type]) {
+  flex: 1;
+  min-width: 260px;
+  background: #0b111a;
+  color: #e8eef4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: 13px "Cascadia Mono", Consolas, monospace;
+  outline: none;
+}
+.web-ctl input:focus { border-color: var(--accent); }
+.nettoggle {
+  color: var(--dim);
+  font-size: 12.5px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+}
+.nettoggle input { accent-color: var(--accent); }
+.web-ctl button {
+  background: var(--accent);
+  color: #04150f;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font: 600 14px "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+.web-ctl button.stopbtn { background: #3d1a1a; color: var(--red); border: 1px solid #6b2727; }
+
+.tkdialog {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 14, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 12px;
+}
+.tkdialog-box {
+  background: #10161f;
+  border: 1px solid #2a3846;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+}
+.tkdialog-icon { font-size: 22px; }
+.tkdialog-icon.error { color: var(--red); }
+.tkdialog-icon.warning { color: var(--amber); }
+.tkdialog-icon.info { color: var(--accent); }
+.tkdialog-text {
+  color: #e8eef4;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+.tkdialog-box button {
+  background: #1d3d33;
+  color: var(--accent);
+  border: 1px solid #1d5c4d;
+  border-radius: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  align-self: flex-end;
+  font: 600 13.5px "Segoe UI", system-ui, sans-serif;
+}
+
 .banner {
   margin-top: 16px;
   border: 1px solid #6b5a27;

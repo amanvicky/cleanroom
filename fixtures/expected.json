@@ -149,7 +149,7 @@
   "benign-notes-app": {
     "score": 0,
     "verdict": "clean",
-    "files_scanned": 4,
+    "files_scanned": 6,
     "findings": [
       [
         "ENV_ACCESS",

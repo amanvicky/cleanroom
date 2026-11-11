@@ -1,0 +1,1016 @@
+"""cleanroom's virtual tkinter — a SUBSET of the tkinter API rendered as real
+HTML widgets in the cleanroom app screen (a browser tab).
+
+This module is executed inside the in-tab Python VM (Pyodide) and registered
+as `tkinter` before repo code runs. A real tkinter needs Tcl/Tk and a real
+display; this shim instead talks to a small JS renderer (window.__cleanroomGui)
+that builds actual HTML widgets and forwards clicks/keeps values, so GUI apps
+can be *used* in the page — not just run headless.
+
+Honest by design:
+- anything outside the subset is counted and reported, never silently faked;
+- mainloop() is non-blocking: the window opens and the terminal stays live;
+- callbacks may be plain functions or coroutines (async ones are drained
+  through the VM's event loop by the JS side).
+"""
+
+import asyncio as _asyncio
+import inspect as _inspect
+import json as _json
+import re as _re
+import traceback as _tb
+
+import js as _js
+
+gui = _js.__cleanroomGui  # installed by runner.js before any repo code runs
+
+# -- state ------------------------------------------------------------------
+
+_registry = {}   # widget id -> widget object
+_timers = {}     # after() counter -> callable
+_pending = []    # awaitables returned by callbacks, drained by the JS side
+_skipped = {}    # unsupported option/feature -> call count
+_noted = set()
+_root = None
+
+CONST_NAMES = [
+    "END", "TRUE", "FALSE", "NONE", "TOP", "BOTTOM", "LEFT", "RIGHT",
+    "BOTH", "X", "Y", "N", "S", "E", "W", "NW", "NE", "SW", "SE",
+    "NS", "EW", "NSEW", "CENTER", "HORIZONTAL", "VERTICAL",
+    "FLAT", "GROOVE", "RIDGE", "RAISED", "SUNKEN", "SOLID",
+    "NORMAL", "DISABLED", "ACTIVE", "READONLY",
+    "SINGLE", "BROWSE", "MULTIPLE", "EXTENDED", "WORD", "CHAR", "ALL",
+]
+
+
+def _unsupported(name):
+    _skipped[name] = _skipped.get(name, 0) + 1
+    if name not in _noted:
+        _noted.add(name)
+        print("  virtual screen: '" + name + "' is outside the tkinter subset — ignored")
+
+
+def _call(fn, *args):
+    """Run a callback; coroutine returns are parked for the JS event loop."""
+    if fn is None:
+        return
+    try:
+        res = fn(*args)
+        if _inspect.isawaitable(res):
+            _pending.append(res)
+    except Exception:
+        _tb.print_exc()
+
+
+async def _drain():
+    while _pending:
+        batch = list(_pending)
+        _pending.clear()
+        await _asyncio.gather(*batch, return_exceptions=True)
+
+
+def _dispatch(widget_id, name, payload):
+    """The single entry point the JS renderer calls back into."""
+    try:
+        data = _json.loads(payload) if payload else {}
+    except ValueError:
+        data = {}
+    if name == "after":
+        fn = _timers.pop(int(data.get("cb", 0)), None)
+        _call(fn)
+        return str(len(_pending))
+    w = _registry.get(int(widget_id))
+    if w is not None:
+        try:
+            w._event(name, data)
+        except Exception:
+            _tb.print_exc()
+    return str(len(_pending))
+
+
+def _num(v):
+    try:
+        if isinstance(v, bool):
+            return int(v)
+        return int(v) if float(v) == int(float(v)) else float(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _font_css(value):
+    """tk font spec (tuple or string) -> a CSS style dict for the renderer."""
+    css, tokens = {}, []
+    if isinstance(value, (list, tuple)):
+        for part in value:
+            tokens.extend(str(part).split())
+    else:
+        tokens = str(value).split()
+    fam = None
+    for tok in tokens:
+        if _re.fullmatch(r"-?\d+", tok):
+            css["fontSize"] = abs(int(tok)) + "px"
+        elif tok == "bold":
+            css["fontWeight"] = "600"
+        elif tok in ("italic", "oblique"):
+            css["fontStyle"] = "italic"
+        elif tok == "underline":
+            css["textDecoration"] = "underline"
+        elif tok == "overstrike":
+            css["textDecoration"] = "line-through"
+        elif tok in ("normal",):
+            pass
+        elif fam is None and tok not in (
+                "TkDefaultFont", "TkTextFont", "TkFixedFont",
+                "TkHeadingFont", "TkMenuFont", "TkCaptionFont"):
+            fam = tok
+    if fam:
+        css["fontFamily"] = "'" + fam + "', system-ui, sans-serif"
+    return css
+
+
+def _margins(px, py):
+    x = px[0] if isinstance(px, (list, tuple)) else px
+    y = py[0] if isinstance(py, (list, tuple)) else py
+    return str(_num(y or 0)) + "px " + str(_num(x or 0)) + "px"
+
+
+class TclError(Exception):
+    pass
+
+
+class _Event:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+# -- variables ----------------------------------------------------------------
+
+class _Variable:
+    def __init__(self, master=None, value=None):
+        self._v = value
+        self._widgets = []
+        self._traces = []
+        self._name = "PY_VAR%d" % (id(self) % 100000)
+
+    def get(self):
+        return self._v
+
+    def set(self, value):
+        self._v = value
+        for w in list(self._widgets):
+            w._var_updated(value)
+        for cb in list(self._traces):
+            _call(cb, self._name, "", "write")
+
+    def trace_add(self, mode, callback):
+        self._traces.append(callback)
+        return ("trace", len(self._traces))
+
+    def trace_variable(self, mode, callback):
+        return self.trace_add(mode, callback)
+
+    def trace(self, mode="w", callback=None):
+        if callback:
+            self._traces.append(callback)
+        return self._name
+
+    def trace_vdelete(self, mode, cb):
+        if cb in self._traces:
+            self._traces.remove(cb)
+
+
+class StringVar(_Variable):
+    def __init__(self, master=None, value=None):
+        super().__init__(master, "" if value is None else str(value))
+
+
+class IntVar(_Variable):
+    def __init__(self, master=None, value=None):
+        super().__init__(master, 0 if value is None else int(value))
+
+
+class DoubleVar(_Variable):
+    def __init__(self, master=None, value=None):
+        super().__init__(master, 0.0 if value is None else float(value))
+
+
+class BooleanVar(_Variable):
+    def __init__(self, master=None, value=None):
+        super().__init__(master, False if value is None else bool(value))
+
+
+Variable = _Variable
+
+
+# -- widgets ------------------------------------------------------------------
+
+class _Widget:
+    _kind = "frame"
+
+    def __init__(self, master=None, cnf=None, **kw):
+        cnf = dict(cnf or {})
+        cnf.update(kw)
+        self._master = master
+        self._cnf = {}
+        self._geo = None
+        self._var = None
+        props = {}
+        for k, v in list(cnf.items()):
+            self._set(k, v, props)
+        parent_id = master._id if master is not None else 0
+        self._id = int(gui.create(parent_id, self._kind, _json.dumps(props)))
+        _registry[self._id] = self
+        self._cnf["id"] = self._id
+
+    def _set(self, key, value, props):
+        """Translate one tkinter option into a renderer prop (or honest skip)."""
+        if key == "command":
+            self._cnf["command"] = value
+            props["hasCommand"] = True
+        elif key in ("textvariable", "variable"):
+            self._bind_var(value, props)
+        elif key in ("text", "label"):
+            self._cnf["text"] = str(value)
+            props["text"] = str(value)
+        elif key == "bg":
+            props["background"] = str(value)
+        elif key == "fg":
+            props["color"] = str(value)
+        elif key in ("background", "foreground"):
+            props["background" if key[0] == "b" else "color"] = str(value)
+        elif key == "font":
+            props["font"] = _font_css(value)
+        elif key in ("width", "height", "borderwidth", "wraplength", "bd"):
+            props[{"bd": "borderwidth"}.get(key, key)] = _num(value)
+        elif key in ("state", "relief", "anchor", "justify", "show", "orient",
+                     "wrap", "selectmode"):
+            props[key] = str(value)
+        elif key in ("from_", "to", "onvalue", "offvalue", "value",
+                     "resolution", "tickinterval"):
+            props[{"from_": "from"}.get(key, key)] = _num(value)
+        elif key == "values":
+            props["values"] = [str(x) for x in value]
+        elif key in ("padx", "pady", "takefocus", "cursor", "underline",
+                     "activebackground", "activeforeground", "disabledforeground",
+                     "selectbackground", "selectforeground", "insertwidth",
+                     "highlightthickness", "highlightbackground", "highlightcolor",
+                     "cursorarrow", "relief3d", "repeatdelay", "repeatinterval",
+                     "buttoncursor", "readonlybackground"):
+            if key in ("repeatdelay", "repeatinterval"):
+                _unsupported("option '" + key + "'")
+        elif key in ("image", "bitmap", "compound"):
+            _unsupported("images (" + key + ")")
+        else:
+            _unsupported("option '" + key + "'")
+        self._cnf[key] = value
+
+    def _bind_var(self, var, props):
+        self._var = var
+        var._widgets.append(self)
+        if isinstance(props, dict):
+            props.setdefault("radioGroup", "v" + str(id(var)).replace("-", "n"))
+
+    def _var_updated(self, value):
+        pass
+
+    def _event(self, name, data):
+        if name == "command":
+            _call(self._cnf.get("command"))
+
+    def config(self, cnf=None, **kw):
+        cnf = dict(cnf or {})
+        cnf.update(kw)
+        props = {}
+        for k, v in list(cnf.items()):
+            self._set(k, v, props)
+        if props:
+            gui.config(self._id, _json.dumps(props))
+
+    configure = config
+
+    def cget(self, key):
+        return self._cnf.get(key)
+
+    __getitem__ = lambda self, key: self._cnf.get(key)
+
+    def destroy(self):
+        _registry.pop(self._id, None)
+        gui.remove(self._id)
+
+    def winfo_width(self):
+        return _num(self._cnf.get("width", 0))
+
+    def winfo_reqwidth(self):
+        return self.winfo_width()
+
+    def winfo_height(self):
+        return _num(self._cnf.get("height", 0))
+
+    def winfo_reqheight(self):
+        return self.winfo_height()
+
+    def winfo_toplevel(self):
+        w = self
+        while getattr(w, "_master", None) is not None:
+            w = w._master
+        return w
+
+    def update(self):
+        pass
+
+    def update_idletasks(self):
+        pass
+
+    def bind(self, seq, fn=None, add=None):
+        _unsupported("bind " + str(seq))
+
+    def unbind(self, seq, funcid=None):
+        pass
+
+    def focus_set(self):
+        pass
+
+    focus_force = focus_set
+
+    def pack(self, **kw):
+        self._apply_geo("pack", kw)
+
+    def grid(self, **kw):
+        self._apply_geo("grid", kw)
+
+    def place(self, **kw):
+        self._apply_geo("place", kw)
+
+    def _apply_geo(self, mode, kw):
+        geo = {"mode": mode}
+        for k, v in kw.items():
+            if k in ("side", "fill", "anchor", "sticky"):
+                geo[k] = str(v)
+            elif k in ("expand", "rowspan", "columnspan"):
+                geo[k] = _num(v)
+            elif k in ("padx", "pady", "row", "column", "x", "y", "relx", "rely",
+                       "width", "height"):
+                geo[k] = _num(v) if not isinstance(v, (list, tuple)) else [_num(x) for x in v]
+            elif k == "in_":
+                pass
+            else:
+                _unsupported("geometry option '" + k + "'")
+        self._geo = geo
+        gui.layout(self._id, _json.dumps(geo))
+
+    def pack_forget(self):
+        self._geo = {"mode": "pack", "forget": 1}
+        gui.layout(self._id, _json.dumps(self._geo))
+
+    grid_forget = pack_forget
+    place_forget = pack_forget
+
+    def pack_info(self):
+        return dict(self._geo)
+
+    grid_info = pack_info
+    place_info = pack_info
+
+
+class Tk(_Widget):
+    _kind = "root"
+
+    def __init__(self, cnf=None, **kw):
+        global _root
+        super().__init__(None, cnf, **kw)
+        _root = self
+        self._wm_delete = None
+        gui.show(str(self._cnf.get("title", "")) or "app")
+
+    def title(self, s):
+        gui.config(self._id, _json.dumps({"title": str(s)}))
+
+    def geometry(self, spec):
+        m = _re.match(r"(\d+)x(\d+)", str(spec))
+        if m:
+            gui.config(self._id, _json.dumps({"winWidth": int(m.group(1)),
+                                              "winHeight": int(m.group(2))}))
+
+    def mainloop(self, *a, **k):
+        gui.show(str(self._cnf.get("title", "")) or "app")
+        print("── app screen ── the window is open in the panel above; click it any time")
+        print("   (virtual tkinter: a subset rendered as real HTML widgets — the terminal stays live)")
+
+    def quit(self):
+        gui.hide()
+
+    def destroy(self):
+        _registry.pop(self._id, None)
+        gui.hide()
+
+    def protocol(self, what, fn=None):
+        if what == "WM_DELETE_WINDOW":
+            self._wm_delete = fn
+        else:
+            _unsupported("protocol " + str(what))
+
+    def _event(self, name, data):
+        if name == "wm_delete":
+            fn = self._wm_delete
+            self._wm_delete = None
+            _call(fn)
+            if fn is None:
+                gui.hide()
+        else:
+            super()._event(name, data)
+
+    def resizable(self, *a, **k):
+        pass
+
+    def minsize(self, *a, **k):
+        pass
+
+    maxsize = minsize
+
+    def attributes(self, *a, **k):
+        _unsupported("window attributes")
+
+    def overrideredirect(self, *a, **k):
+        pass
+
+    def after(self, ms, fn=None):
+        n = len(_timers) + 1
+        _timers[n] = fn
+        gui.after(int(ms), n)
+        return "after#" + str(n)
+
+    def after_cancel(self, token):
+        try:
+            _timers.pop(int(str(token).split("#")[-1]), None)
+        except (ValueError, IndexError):
+            pass
+
+    def winfo_children(self):
+        return []
+
+    def bell(self):
+        pass
+
+
+class Toplevel(_Widget):
+    _kind = "toplevel"
+
+    def __init__(self, master=None, cnf=None, **kw):
+        super().__init__(None, cnf, **kw)  # a Toplevel mounts on the screen itself
+        gui.show(str(self._cnf.get("title", "")) or "app")
+
+    def title(self, s):
+        gui.config(self._id, _json.dumps({"title": str(s)}))
+
+    def geometry(self, spec):
+        m = _re.match(r"(\d+)x(\d+)", str(spec))
+        if m:
+            gui.config(self._id, _json.dumps({"winWidth": int(m.group(1)),
+                                              "winHeight": int(m.group(2))}))
+
+    def transient(self, *a, **k):
+        pass
+
+    def grab_set(self, *a, **k):
+        pass
+
+    def lift(self, *a, **k):
+        pass
+
+    def protocol(self, what, fn=None):
+        if what != "WM_DELETE_WINDOW":
+            _unsupported("protocol " + str(what))
+
+
+class Frame(_Widget):
+    _kind = "frame"
+
+
+class LabelFrame(Frame):
+    _kind = "labelframe"
+
+
+class Label(_Widget):
+    _kind = "label"
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        props["text"] = str(var.get())
+
+    def _var_updated(self, value):
+        gui.config(self._id, _json.dumps({"text": str(value)}))
+
+
+class Message(Label):
+    pass
+
+
+class Button(_Widget):
+    _kind = "button"
+
+    def invoke(self):
+        _call(self._cnf.get("command"))
+
+
+class Entry(_Widget):
+    _kind = "entry"
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        props["value"] = str(var.get())
+
+    def _var_updated(self, value):
+        gui.config(self._id, _json.dumps({"value": str(value)}))
+
+    def _event(self, name, data):
+        if name == "entry":
+            v = str(data.get("value", ""))
+            if self._var is not None and str(self._var.get()) != v:
+                self._var.set(v)
+        else:
+            super()._event(name, data)
+
+    def get(self):
+        return str(gui.value(self._id))
+
+    def insert(self, index, s):
+        gui.entryInsert(self._id, str(index), str(s))
+
+    def delete(self, first="0", last=None):
+        gui.entryDelete(self._id, str(first), None if last is None else str(last))
+
+    def icursor(self, index):
+        pass
+
+    def selection_range(self, first, last):
+        pass
+
+    def xview(self, *a):
+        pass
+
+
+class Text(_Widget):
+    _kind = "text"
+
+    def get(self, first="1.0", last=None):
+        return str(gui.value(self._id))
+
+    def insert(self, index, s, *tags):
+        if str(index) == "end" or str(index).endswith("end"):
+            gui.textAppend(self._id, str(s))
+        else:
+            _unsupported("Text.insert at an index other than end (appended instead)")
+            gui.textAppend(self._id, str(s))
+
+    def delete(self, first="1.0", last=None):
+        if last is None or str(last) == "end" or str(last).endswith("end"):
+            gui.textSet(self._id, "")
+        else:
+            _unsupported("Text.delete over a range (cleared instead)")
+            gui.textSet(self._id, "")
+
+    def see(self, *a):
+        pass
+
+    def mark_set(self, *a, **k):
+        pass
+
+    def yview(self, *a):
+        pass
+
+    def tag_config(self, *a, **k):
+        _unsupported("Text tag_config (colored ranges)")
+
+    tag_configure = tag_config
+
+
+class Listbox(_Widget):
+    _kind = "listbox"
+
+    def insert(self, index, *items):
+        gui.list(self._id, "insert",
+                 _json.dumps({"index": str(index), "items": [str(x) for x in items]}))
+
+    def delete(self, first, last=None):
+        gui.list(self._id, "delete",
+                 _json.dumps({"first": str(first),
+                              "last": None if last is None else str(last)}))
+
+    def get(self, first=0, last=None):
+        vals = [str(x) for x in gui.list(self._id, "get", "{}")]
+        if last is None:
+            try:
+                return vals[int(first)]
+            except (IndexError, ValueError):
+                return ""
+        return tuple(vals[int(first):int(last) + 1])
+
+    def curselection(self):
+        return tuple(int(x) for x in gui.list(self._id, "cur", "{}"))
+
+    def size(self):
+        return int(gui.list(self._id, "size", "{}"))
+
+    def selection_set(self, first, to=None):
+        gui.list(self._id, "select", _json.dumps({"first": int(first),
+                                                  "to": None if to is None else int(to)}))
+
+    def selection_clear(self, first, to=None):
+        gui.list(self._id, "clearsel", "{}")
+
+    def see(self, index):
+        gui.list(self._id, "see", _json.dumps({"index": int(index)}))
+
+    def _event(self, name, data):
+        if name == "select":
+            _call(self._cnf.get("command"))
+        else:
+            super()._event(name, data)
+
+
+class Canvas(_Widget):
+    _kind = "canvas"
+
+    def _c(self, op, coords, kw):
+        payload = {"coords": [_num(x) for x in coords], "opts": _canvas_opts(kw)}
+        try:
+            return int(gui.canvas(self._id, "create_" + op, _json.dumps(payload)))
+        except Exception:
+            return 0
+
+    def create_line(self, *coords, **kw):
+        return self._c("line", coords, kw)
+
+    def create_rectangle(self, *coords, **kw):
+        return self._c("rectangle", coords, kw)
+
+    def create_oval(self, *coords, **kw):
+        return self._c("oval", coords, kw)
+
+    def create_polygon(self, *coords, **kw):
+        return self._c("polygon", coords, kw)
+
+    def create_text(self, *coords, **kw):
+        return self._c("text", coords, kw)
+
+    def create_arc(self, *coords, **kw):
+        return self._c("arc", coords, kw)
+
+    def create_window(self, *a, **k):
+        _unsupported("Canvas.create_window (embedding widgets in a canvas)")
+        return 0
+
+    def create_image(self, *a, **k):
+        _unsupported("Canvas.create_image")
+        return 0
+
+    def itemconfig(self, item, **kw):
+        gui.canvas(self._id, "itemconfig",
+                   _json.dumps({"item": int(item), "opts": _canvas_opts(kw)}))
+
+    itemconfigure = itemconfig
+
+    def delete(self, *items):
+        gui.canvas(self._id, "delete",
+                   _json.dumps({"items": [str(x) for x in items] or ["all"]}))
+
+    def move(self, item, dx, dy):
+        gui.canvas(self._id, "move", _json.dumps({"item": int(item),
+                                                  "dx": _num(dx), "dy": _num(dy)}))
+
+    def coords(self, item, *new):
+        if new:
+            gui.canvas(self._id, "coords",
+                       _json.dumps({"item": int(item), "coords": [_num(x) for x in new]}))
+
+    def bind(self, seq, fn=None, add=None):
+        if seq == "<Button-1>":
+            self._cnf["canvas_click"] = fn
+            gui.canvas(self._id, "bind_click", "{}")
+        else:
+            _unsupported("Canvas.bind " + str(seq))
+
+    def tag_bind(self, *a, **k):
+        _unsupported("Canvas.tag_bind")
+
+    def _event(self, name, data):
+        if name == "click":
+            fn = self._cnf.get("canvas_click")
+            if fn is not None:
+                _call(fn, _Event(x=data.get("x", 0), y=data.get("y", 0)))
+        else:
+            super()._event(name, data)
+
+
+def _canvas_opts(kw):
+    opts = {}
+    for k, v in kw.items():
+        if k in ("fill", "outline", "width", "text", "start", "extent", "style", "state"):
+            opts[k] = str(v) if k in ("fill", "outline", "text", "style", "state") else _num(v)
+        elif k == "font":
+            opts["fontSize"] = _num(_font_css(v).get("fontSize", "12px").replace("px", ""))
+        elif k == "tags" or k == "tag":
+            opts["tags"] = [str(x) for x in (v if isinstance(v, (list, tuple)) else [v])]
+        elif k in ("dash", "arrow", "stipple", "activewidth", "arrowshape",
+                   "capstyle", "joinstyle", "smooth", "splinesteps", "offset"):
+            _unsupported("canvas option '" + k + "'")
+        else:
+            _unsupported("canvas option '" + k + "'")
+    return opts
+
+
+class Checkbutton(_Widget):
+    _kind = "check"
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        props["checked"] = bool(var.get() == self._cnf.get("onvalue", 1) or var.get() is True)
+
+    def _var_updated(self, value):
+        checked = bool(value == self._cnf.get("onvalue", 1) or value is True)
+        gui.config(self._id, _json.dumps({"checked": checked}))
+
+    def _event(self, name, data):
+        if name == "command":
+            checked = bool(data.get("checked"))
+            if self._var is not None:
+                self._var.set(self._cnf.get("onvalue", 1) if checked
+                              else self._cnf.get("offvalue", 0))
+            _call(self._cnf.get("command"))
+        else:
+            super()._event(name, data)
+
+
+class Radiobutton(_Widget):
+    _kind = "radio"
+
+    def __init__(self, *a, **kw):
+        self._radio_group = None
+        super().__init__(*a, **kw)
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        self._radio_group = props.get("radioGroup")
+        props["radioGroup"] = self._radio_group
+        props["value"] = str(self._cnf.get("value", ""))
+        props["checked"] = bool(var.get() == self._cnf.get("value"))
+
+    def _set(self, key, value, props):
+        if key == "value" and isinstance(self, Radiobutton):
+            self._cnf["value"] = value
+            props["value"] = str(value)
+        else:
+            super()._set(key, value, props)
+
+    def _var_updated(self, value):
+        checked = bool(value == self._cnf.get("value"))
+        gui.config(self._id, _json.dumps({"checked": checked}))
+
+    def _event(self, name, data):
+        if name == "command" and data.get("checked"):
+            if self._var is not None:
+                self._var.set(self._cnf.get("value"))
+            _call(self._cnf.get("command"))
+        else:
+            super()._event(name, data)
+
+
+class Scale(_Widget):
+    _kind = "scale"
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        props["value"] = _num(var.get())
+
+    def _var_updated(self, value):
+        gui.config(self._id, _json.dumps({"value": _num(value)}))
+
+    def _event(self, name, data):
+        if name == "command":
+            v = _num(data.get("value", 0))
+            if self._var is not None:
+                self._var.set(v)
+            _call(self._cnf.get("command"), v)
+        else:
+            super()._event(name, data)
+
+    def get(self):
+        try:
+            return float(gui.value(self._id))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set(self, v):
+        gui.config(self._id, _json.dumps({"value": _num(v)}))
+
+
+class Scrollbar(_Widget):
+    _kind = "scrollbar"
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        _unsupported("Scrollbar (content scrolls by itself instead)")
+
+    def set(self, *a, **k):
+        pass
+
+
+class Menu(_Widget):
+    _kind = "menu"
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        _unsupported("Menu (menubars don't render on the virtual screen)")
+
+    def add_command(self, *a, **k):
+        _unsupported("Menu entries")
+
+    add_cascade = add_command
+    add_separator = add_command
+    add_checkbutton = add_command
+    add_radiobutton = add_command
+
+
+class Spinbox(Entry):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        _unsupported("Spinbox (rendered as a plain entry)")
+
+
+class OptionMenu(Menu):
+    pass
+
+
+# -- messagebox / filedialog / simpledialog -----------------------------------
+
+def _mb(kind):
+    def show(title="cleanroom", message="", **kw):
+        gui.dialog(kind, str(title), str(message))
+        return "ok"
+    return show
+
+
+def _ask(default, note):
+    def ask(title="cleanroom", message="", **kw):
+        _unsupported(note)
+        return default
+    return ask
+
+
+class _Namespace:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def _install_submodules(mod):
+    """Called by the runner right after the shim is exec'd: registers the
+    tkinter subpackages and the JS-side event hooks."""
+    import builtins as _b
+    import sys as _s
+    import types as _t
+
+    constants = _t.SimpleNamespace(**{n: getattr(mod, n) for n in CONST_NAMES})
+    constants.TclError = TclError
+
+    ttk = _t.SimpleNamespace(
+        Frame=Frame, Label=Label, Button=Button, Entry=Entry,
+        Checkbutton=Checkbutton, Radiobutton=Radiobutton, Scale=Scale,
+        Combobox=Entry, Separator=Frame, Sizegrip=Frame,
+        Style=_t.SimpleNamespace,
+        Labelframe=LabelFrame, LabelFrame=LabelFrame,
+    )
+
+    class _Style:
+        def __init__(self, *a, **k):
+            pass
+
+        def configure(self, *a, **k):
+            pass
+
+        def map(self, *a, **k):
+            return {}
+
+        def lookup(self, *a, **k):
+            return ""
+
+    ttk.Style = _Style
+
+    def _not_available(name):
+        def gone(*a, **k):
+            raise TclError(
+                "the virtual tkinter subset has no " + name +
+                " — run the app on a real PC instead: `python cleanroom.py run <repo>`")
+        return gone
+
+    for _name in ("Treeview", "Notebook", "Progressbar", "Panedwindow",
+                  "PanedWindow", "Scrollbar", "Spinbox", "Notebook"):
+        setattr(ttk, _name, _not_available("ttk." + _name))
+    ttk.Scrollbar = Scrollbar
+    ttk.Spinbox = Spinbox
+
+    messagebox = _t.SimpleNamespace(
+        showinfo=_mb("info"), showwarning=_mb("warning"), showerror=_mb("error"),
+        askyesno=_ask(False, "askyesno (a dialog that needs an answer — returned False)"),
+        askokcancel=_ask(False, "askokcancel (returned False)"),
+        askretrycancel=_ask(False, "askretrycancel (returned False)"),
+        askquestion=_ask("no", "askquestion (returned 'no')"),
+    )
+
+    def _fd_stub(name):
+        def stub(*a, **k):
+            _unsupported(name)
+            return ""
+        return stub
+
+    filedialog = _t.SimpleNamespace(
+        askopenfilename=_fd_stub("filedialog.askopenfilename"),
+        askopenfilenames=_fd_stub("filedialog.askopenfilenames"),
+        asksaveasfilename=_fd_stub("filedialog.asksaveasfilename"),
+        askdirectory=_fd_stub("filedialog.askdirectory"),
+    )
+
+    simpledialog = _t.SimpleNamespace(
+        askstring=_fd_stub("simpledialog.askstring"),
+        askinteger=_fd_stub("simpledialog.askinteger"),
+        askfloat=_fd_stub("simpledialog.askfloat"),
+    )
+
+    mod.constants = constants
+    mod.ttk = ttk
+    mod.messagebox = messagebox
+    mod.filedialog = filedialog
+    mod.simpledialog = simpledialog
+
+    _s.modules["tkinter.constants"] = constants
+    _s.modules["tkinter.ttk"] = ttk
+    _s.modules["tkinter.messagebox"] = messagebox
+    _s.modules["tkinter.filedialog"] = filedialog
+    _s.modules["tkinter.simpledialog"] = simpledialog
+
+    _b.__cr_gui_event = _dispatch
+    _b.__cr_gui_drain = _drain
+    _b.__cr_gui_pending = lambda: len(_pending)
+
+
+# -- module-level API ---------------------------------------------------------
+
+def mainloop(*a, **k):
+    if _root is not None:
+        _root.mainloop(*a, **k)
+    else:
+        _unsupported("mainloop() without a Tk() window")
+
+
+def _module_noop(*a, **k):
+    return None
+
+
+Tcl = _module_noop
+getint = int
+getdouble = float
+
+TkVersion = 8.6
+TclVersion = 8.6
+
+END = "end"
+TRUE = 1
+FALSE = 0
+NONE = "none"
+TOP = "top"
+BOTTOM = "bottom"
+LEFT = "left"
+RIGHT = "right"
+BOTH = "both"
+X = "x"
+Y = "y"
+N = "n"
+S = "s"
+E = "e"
+W = "w"
+NW = "nw"
+NE = "ne"
+SW = "sw"
+SE = "se"
+NS = "ns"
+EW = "ew"
+NSEW = "nsew"
+CENTER = "center"
+HORIZONTAL = "horizontal"
+VERTICAL = "vertical"
+FLAT = "flat"
+GROOVE = "groove"
+RIDGE = "ridge"
+RAISED = "raised"
+SUNKEN = "sunken"
+SOLID = "solid"
+NORMAL = "normal"
+DISABLED = "disabled"
+ACTIVE = "active"
+READONLY = "readonly"
+SINGLE = "single"
+BROWSE = "browse"
+MULTIPLE = "multiple"
+EXTENDED = "extended"
+WORD = "word"
+CHAR = "char"
+ALL = "all"

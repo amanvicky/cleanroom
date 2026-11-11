@@ -49,6 +49,7 @@
         <button data-live-preset="https://github.com/amanvicky/spamcheck">spam classifier</button>
         <button data-live-preset="https://github.com/amanvicky/attention-from-scratch">attention from scratch (numpy)</button>
         <button data-live-preset="https://github.com/amanvicky/tokenizer-playground">byte-BPE tokenizer</button>
+        <button data-live-preset="https://github.com/amanvicky/tk-gui-demo">GUI demo (tkinter + web app)</button>
       </div>
       <div class="status" id="liveStatus"></div>
 
@@ -57,12 +58,39 @@
         <div class="prompt-row">
           <span class="prompt-label">repo&gt;</span>
           <input id="termInput" spellcheck="false" autocomplete="off"
-                 placeholder="python, or: run main.py · ls · help · wipe">
+                 placeholder="python, or: run main.py · preview · ls · help · wipe">
           <button id="wipeBtn" title="erase everything">wipe</button>
+        </div>
+        <div class="pc-web hidden" id="pcWebRow" data-shown="">
+          <span class="mode-hint">run the repo as a real app on this PC — its own UI opens in the app screen below:</span>
+          <div class="web-ctl">
+            <input id="pcWebCmd" spellcheck="false" autocomplete="off"
+                   placeholder="start command, e.g. python app.py">
+            <label class="nettoggle"><input type="checkbox" id="pcWebNet"> allow network (installs)</label>
+            <button id="pcWebStart">Start app</button>
+            <button id="pcWebStop" class="stopbtn hidden">Stop</button>
+          </div>
+          <div class="presets" id="pcWebChips"></div>
         </div>
         <p class="note">The VM lives in this tab's memory only — nothing was ever written to your disk.
         It has no network sockets, so code here can't phone home. Whatever you run, you run
         <b>at your own responsibility</b>. Close the tab when you're done: gone.</p>
+      </div>
+
+      <div class="card hidden appcard" id="appCard">
+        <div class="apphead">
+          <span class="apptitle" id="appTitle">app screen</span>
+          <button id="appCloseBtn" title="hide the app screen (the window keeps living until you wipe)">✕</button>
+        </div>
+        <div id="appContent" class="appcontent"></div>
+        <div id="webWrap" class="hidden">
+          <div class="webbar"><span id="webUrl"></span></div>
+          <iframe id="webFrame" sandbox="allow-scripts allow-forms allow-modals allow-popups"
+                  title="app screen — the app's own UI"></iframe>
+        </div>
+        <p class="note" id="appNote">GUI apps run on the app screen: tkinter apps render as real HTML
+        widgets (a subset — skipped extras are counted), web previews run in a frame with no origin
+        and no storage. In this-PC mode the app is a real process serving a real port on your machine.</p>
       </div>
     </section>
 

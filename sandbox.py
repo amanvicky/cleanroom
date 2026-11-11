@@ -248,6 +248,10 @@ class Session:
     def _child_env(self):
         self._ensure_venv()
         env, _ = scrub_env()
+        # piped stdout is block-buffered — a server's startup banner would sit
+        # in the buffer and the page would never see the port. Unbuffered
+        # children keep every stream (and every port chip) honest.
+        env["PYTHONUNBUFFERED"] = "1"
         real_py = os.path.dirname(sys.executable)
         if self._venv_ready:
             # venv first: `python` and `pip` inside the sandbox are the
@@ -378,9 +382,11 @@ class StreamHandle:
         self._done.wait(5)
 
 
-def execute_stream(self, cmd):
+def execute_stream(self, cmd, timeout=None):
     """Start one command inside the sandbox and return a StreamHandle whose
-    output arrives line by line. Only one streamed command at a time."""
+    output arrives line by line. Only one streamed command at a time.
+    timeout: None = the session default; 0 = no timeout at all (web apps
+    must keep serving until the operator stops them)."""
     if self.closed:
         raise SandboxError("session is closed")
     if getattr(self, "active_stream", None) and not self.active_stream.poll()[0]:
@@ -408,12 +414,15 @@ def execute_stream(self, cmd):
     self.child = proc
 
     def _on_timeout():
-        self.kill_reason = "timeout (%ds)" % self.timeout
+        self.kill_reason = "timeout (%ds)" % limit
         _kill_tree(proc.pid)
 
-    timer = threading.Timer(self.timeout, _on_timeout)
+    limit = self.timeout if timeout is None else timeout
+    timer = None
+    if limit and limit > 0:
+        timer = threading.Timer(limit, _on_timeout)
+        timer.start()
     self._timer = timer
-    timer.start()
     handle = StreamHandle(self, proc, buf, lock, done, result)
     self.active_stream = handle
     return handle

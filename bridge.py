@@ -11,6 +11,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -22,7 +23,28 @@ import sandbox
 import stages as stages_mod
 import triage
 
-VERSION = "0.1.0"
+VERSION = "0.1.4"
+
+# a file that imports tkinter means the repo has a Python GUI — on a real PC
+# it opens a real window on the operator's desktop
+_TK_IMPORT = re.compile(r"(?m)^\s*(?:import\s+tkinter\b|from\s+tkinter\b)")
+_TK_ENTRY_PREFER = ["main.py", "app.py", "gui.py", "demo.py", "run.py", "__main__.py"]
+
+
+def _tkinter_entry(tree):
+    """Best entry file to `run` for a tkinter GUI app, or None."""
+    candidates = [(rel, "mainloop" in text) for rel, text in tree
+                  if rel.endswith(".py") and _TK_IMPORT.search(text)]
+    if not candidates:
+        return None
+    names = dict(candidates)
+    for p in _TK_ENTRY_PREFER:
+        if p in names:
+            return p
+    for rel, has_mainloop in candidates:
+        if has_mainloop:
+            return rel
+    return candidates[0][0]
 
 
 def _total_memory_gb():
@@ -88,30 +110,37 @@ class Bridge:
                 "score": s.report["score"],
                 "commands": s.commands,
                 "open": not s.closed,
+                "net": s.net,
                 "resumed_from": getattr(s, "resumed_from", None),
             },
         }
 
-    def api_open(self, url, approve=False):
+    def api_open(self, url, approve=False, net="blocked"):
         with self.lock:
             if self.session and not self.session.closed:
                 return {"ok": False, "error": "a session is already open — wipe it first"}
+            if net not in ("blocked", "allowed"):
+                net = "blocked"
             if os.path.isdir(url):
-                sess = sandbox.Session(local=url, net="blocked", timeout=120)
+                sess = sandbox.Session(local=url, net=net, timeout=120)
             else:
-                sess = sandbox.Session(url=url, net="blocked", timeout=120)
+                sess = sandbox.Session(url=url, net=net, timeout=120)
             try:
                 sess.open()
             except sandbox.SandboxError as e:
                 return {"ok": False, "error": str(e)}
             self.session = sess
             rep = sess.report
+            tree = sess._tree()
             dangerous = rep["verdict"] in ("high-risk", "dangerous")
             return {
                 "ok": True,
                 "report": rep,
                 "needs_approval": dangerous and not approve,
                 "commit": sess.commit,
+                "net": sess.net,
+                "paths": [rel for rel, _ in tree],
+                "tkinter_entry": _tkinter_entry(tree),
             }
 
     def api_run(self, cmd=None, py=None):
@@ -158,6 +187,54 @@ class Bridge:
             return {"ok": False, "error": "no session"}
         s.approved = True
         return {"ok": True, "approved": True}
+
+    def api_web(self, cmd, net=None):
+        """Run the repo as a real web app: a long-lived process with NO command
+        timeout (it must keep serving until the operator stops it). If the
+        requested network policy differs from the session's, the sandbox is
+        re-opened with it — logged honestly, because a re-open is a fresh clone."""
+        with self.lock:
+            s = self.session
+            if not s or s.closed:
+                return {"ok": False, "error": "no open session"}
+            if net in ("blocked", "allowed") and net != s.net:
+                url = s.url or s.local
+                was_approved = getattr(s, "approved", False)
+                s.close("re-open with net=" + net)
+                self.session = None
+                s2 = (sandbox.Session(local=url, net=net, timeout=120)
+                      if os.path.isdir(url) else sandbox.Session(url=url, net=net, timeout=120))
+                try:
+                    s2.open()
+                except sandbox.SandboxError as e:
+                    return {"ok": False, "error": str(e)}
+                s2.approved = was_approved
+                self.session = s2
+                s = s2
+                self._log_ext("re-open %s with net=%s (fresh clone — web installs need it)"
+                              % (url, net))
+            if s.report["verdict"] in ("high-risk", "dangerous") and not getattr(s, "approved", False):
+                return {"ok": False, "needs_approval": True,
+                        "error": "triage says %s (%d/100) — approve first"
+                                 % (s.report["verdict"], s.report["score"])}
+            if getattr(s, "active_stream", None) and not s.active_stream.poll()[0]:
+                return {"ok": False, "error": "a command is already running — stop it first"}
+            try:
+                s.execute_stream(cmd, timeout=0)  # 0 = no timeout: servers serve until stopped
+            except sandbox.SandboxError as e:
+                return {"ok": False, "error": str(e)}
+            s.approved = True  # an explicit start by the operator is the approval
+            return {"ok": True, "net": s.net}
+
+    def api_web_stop(self):
+        s = self.session
+        if not s or s.closed:
+            return {"ok": True, "stopped": False}
+        stream = getattr(s, "active_stream", None)
+        if not stream or stream.poll()[0]:
+            return {"ok": True, "stopped": False}
+        stream.kill()
+        return {"ok": True, "stopped": True}
 
     def api_wipe(self):
         with self.lock:
@@ -277,10 +354,12 @@ class _Handler(BaseHTTPRequestHandler):
             url = (body.get("url") or "").strip()
             if not url:
                 return self._reply({"ok": False, "error": "url required"}, 400)
-            res = self.bridge.api_open(url, approve=bool(body.get("approve")))
+            res = self.bridge.api_open(url, approve=bool(body.get("approve")),
+                                       net=body.get("net") or "blocked")
             if res.get("ok"):
                 rep = res["report"]
-                self._log("open   %s — %d/100 %s" % (url, rep["score"], rep["verdict"]))
+                self._log("open   %s — %d/100 %s (net=%s)"
+                          % (url, rep["score"], rep["verdict"], res["net"]))
             return self._reply(res, 200 if res.get("ok") else 409)
 
         if u.path == "/api/approve":
@@ -298,6 +377,21 @@ class _Handler(BaseHTTPRequestHandler):
             if res.get("ok"):
                 self._log("run    %s" % (cmd or "(python) " + py)[:90])
             return self._reply(res, 200 if res.get("ok") else 409)
+
+        if u.path == "/api/web":
+            cmd = (body.get("cmd") or "").strip()
+            if not cmd:
+                return self._reply({"ok": False, "error": "cmd required"}, 400)
+            res = self.bridge.api_web(cmd, net=body.get("net"))
+            if res.get("ok"):
+                self._log("web    %s (no timeout — stop it from the page)" % cmd[:80])
+            return self._reply(res, 200 if res.get("ok") else 409)
+
+        if u.path == "/api/web_stop":
+            res = self.bridge.api_web_stop()
+            if res.get("stopped"):
+                self._log("web    stopped — process tree killed")
+            return self._reply(res)
 
         if u.path == "/api/wipe":
             res = self.bridge.api_wipe()

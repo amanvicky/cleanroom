@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Notes (webapp fixture)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; background: #f7f7f5; margin: 0;
+         display: flex; justify-content: center; padding: 40px 16px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 10px;
+          padding: 22px; width: 420px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: #777; margin: 0 0 14px; font-size: 13px; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; padding: 9px 12px; border: 1px solid #ccc; border-radius: 8px;
+          font: 14px system-ui, sans-serif; }
+  button { background: #0a7d4f; color: #fff; border: none; border-radius: 8px;
+           padding: 9px 16px; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+  ul { list-style: none; margin: 14px 0 0; padding: 0; }
+  li { padding: 9px 4px; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Notes</h1>
+  <p class="sub">benign webapp fixture — plain HTML + JS, no network, no storage</p>
+  <div class="row">
+    <input id="note" placeholder="write a note…">
+    <button id="add">add</button>
+  </div>
+  <ul id="list"></ul>
+</div>
+<script>
+var notes = [];
+function render() {
+  var ul = document.getElementById("list");
+  ul.replaceChildren();
+  notes.forEach(function (t) {
+    var li = document.createElement("li");
+    li.textContent = t;
+    ul.appendChild(li);
+  });
+}
+document.getElementById("add").addEventListener("click", function () {
+  var el = document.getElementById("note");
+  var v = el.value.trim();
+  if (!v) return;
+  notes.push(v);
+  el.value = "";
+  render();
+});
+document.getElementById("note").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") document.getElementById("add").click();
+});
+</script>
+</body>
+</html>
