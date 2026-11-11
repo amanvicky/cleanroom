@@ -55,7 +55,7 @@ document.querySelectorAll('input[name="runmode"]').forEach(radio => {
   radio.addEventListener("change", () => {
     mode = document.querySelector('input[name="runmode"]:checked').value;
     pcRow.classList.toggle("hidden", mode !== "pc");
-    pcWebRow.classList.toggle("hidden", mode !== "pc" || !pcWebRow.dataset.shown);
+    if (pcWebRow) pcWebRow.classList.toggle("hidden", mode !== "pc" || !pcWebRow.dataset.shown);
     if (mode === "vm") {
       setLiveStatus(pyodide ? "in-tab VM — close the tab and nothing remains"
                             : "in-tab VM mode — the repo runs inside this browser tab");
@@ -96,6 +96,7 @@ async function connectBridge() {
         pcSpecs.appendChild(chip);
       });
       setLiveStatus("bridge connected — repos will run on the COMPLETE PC (real processes), sandboxed and wiped after");
+      liveCard.classList.remove("hidden");
       line("── connected to this PC's sandbox ──", "t-meta");
       line([d.platform, d.cpu_cores + " cores", d.memory_gb ? d.memory_gb + " GB RAM" : "",
             "python " + d.python].filter(Boolean).join(" · "), "t-dim");
@@ -103,15 +104,19 @@ async function connectBridge() {
       renderStageChips();
     } else if (data.needs_token) {
       setLiveStatus("bridge found, but that token didn't match — check the cleanroom serve window", true);
+      liveCard.classList.remove("hidden");
+      line("bridge found, but that token didn't match — check the cleanroom serve window", "t-err");
     } else {
       setLiveStatus("bridge said: " + (data.error || "unknown error"), true);
     }
   } catch (e) {
     setLiveStatus("no bridge on 127.0.0.1:8641 — run `python cleanroom.py serve` on this PC first", true);
+    liveCard.classList.remove("hidden");
+    line("no bridge on 127.0.0.1:8641 — run `python cleanroom.py serve` on this PC first", "t-err");
   }
 }
-pcConnect.addEventListener("click", connectBridge);
-pcToken.addEventListener("keydown", e => { if (e.key === "Enter") connectBridge(); });
+pcConnect?.addEventListener("click", connectBridge);
+pcToken?.addEventListener("keydown", e => { if (e.key === "Enter") connectBridge(); });
 
 function deviceInfo() {
   const parts = [];
@@ -1389,16 +1394,17 @@ async function wipeVM() {
   await pyodide.runPythonAsync(`
 import sys, os, shutil
 _keep = {"sys", "builtins", "_frozen_importlib", "_frozen_importlib_external", "_imp", "marshal", "posix"}
+_spares = {"sys", "os", "shutil", "_keep", "_m", "_k", "_spares"}
 for _m in list(sys.modules):
     if _m not in _keep:
         sys.modules.pop(_m, None)
 for _k in list(globals()):
-    if not _k.startswith("__") and _k not in ("sys", "os", "shutil"):
+    if not _k.startswith("__") and _k not in _spares:
         del globals()[_k]
 if os.path.isdir("/repo"):
     shutil.rmtree("/repo", ignore_errors=True)
 os.makedirs("/repo", exist_ok=True)
-del _keep, _m, _k
+del _keep, _m, _k, _spares
 `);
   await pyodide.runPythonAsync(VM_SETUP);
   await installShim(pyodide);
@@ -1433,10 +1439,10 @@ document.querySelectorAll("button[data-live-preset]").forEach(btn => {
     loadRepo(btn.dataset.livePreset);
   });
 });
-appCloseBtn.addEventListener("click", () => appCard.classList.add("hidden"));
-pcWebStart.addEventListener("click", pcWebStartFn);
-pcWebStop.addEventListener("click", pcWebStopFn);
-document.getElementById("wipeBtn").addEventListener("click", () => {
+appCloseBtn?.addEventListener("click", () => appCard.classList.add("hidden"));
+pcWebStart?.addEventListener("click", pcWebStartFn);
+pcWebStop?.addEventListener("click", pcWebStopFn);
+document.getElementById("wipeBtn")?.addEventListener("click", () => {
   if (mode === "pc") pcExec("wipe");
   else wipeVM();
 });

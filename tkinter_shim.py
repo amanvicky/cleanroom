@@ -383,6 +383,7 @@ class Tk(_Widget):
         gui.show(str(self._cnf.get("title", "")) or "app")
 
     def title(self, s):
+        self._cnf["title"] = str(s)
         gui.config(self._id, _json.dumps({"title": str(s)}))
 
     def geometry(self, spec):

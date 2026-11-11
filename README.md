@@ -113,7 +113,11 @@ Open [amanvicky.github.io/cleanroom](https://amanvicky.github.io/cleanroom/), sw
 **“this PC”**, paste the token. The page shows your real specs (cores, RAM, Python) and from then
 on repos you run there execute as real processes on your machine — with the full guardrail set:
 whitelist environment, network guard, timeout, and a wipe that re-verifies zero residue. A repo
-that triages DANGEROUS must be explicitly approved before it runs.
+that triages DANGEROUS must be explicitly approved before it runs. Server-shaped repos get a
+**Start app** row: the app runs as a real process, the page picks up the port it prints, and the
+app's own UI opens in the app screen:
+
+![this-PC mode: the app's real UI served by the machine, used inside the page](docs/cleanroom-pc-web.png)
 
 ```
 ── triaged on your PC: https://github.com/amanvicky/spamcheck @ 8f3cc12 ──
