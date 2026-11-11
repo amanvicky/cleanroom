@@ -220,18 +220,31 @@ async function runPython(source, label) {
   busy = true;
   try {
     try { await pyodide.loadPackagesFromImports(source); } catch (e) { /* optional */ }
-    if (label === "<repl>") {
-      // compile mode "single" = real REPL semantics: runs statements AND
-      // echoes the value of every expression statement, like python's shell
-      const lit = JSON.stringify(source);
-      await pyodide.runPythonAsync(
-        "exec(compile(" + lit + ', "<repl>", "single"))');
-    } else {
-      await pyodide.runPythonAsync(source);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (label === "<repl>") {
+          // compile mode "single" = real REPL semantics: runs statements AND
+          // echoes the value of every expression statement, like python's shell
+          const lit = JSON.stringify(source);
+          await pyodide.runPythonAsync(
+            "exec(compile(" + lit + ', "<repl>", "single"))');
+        } else {
+          await pyodide.runPythonAsync(source);
+        }
+        return;
+      } catch (e) {
+        const msg = (e.message || String(e)).trim();
+        const missing = /No module named '([A-Za-z0-9_.]+)'/.exec(msg);
+        if (attempt === 0 && missing && /included in the Pyodide distribution/.test(msg)) {
+          line("this repo needs '" + missing[1] + "' — loading it into the VM…", "t-dim");
+          await pyodide.loadPackage(missing[1]);
+          line(missing[1] + " ready, running again…", "t-dim");
+          continue;
+        }
+        line(msg, "t-err");
+        return;
+      }
     }
-  } catch (e) {
-    const msg = (e.message || String(e)).trim();
-    line(msg, "t-err");
   } finally {
     busy = false;
   }
