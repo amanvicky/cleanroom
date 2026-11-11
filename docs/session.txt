@@ -1,0 +1,91 @@
+$ python cleanroom.py run https://github.com/amanvicky/edgar-rev --cmd "python edgar_rev.py AAPL --from-file examples/aapl_recorded.json"
+== cleanroom ==
+[1/4] clone    https://github.com/amanvicky/edgar-rev
+      ok — commit bd4578a, sandbox is a temp dir that will be deleted on exit
+[2/4] triage
+TRIAGE REPORT — https://github.com/amanvicky/edgar-rev
+scanned 9 files  ·  4 findings
+categories: network=4
+------------------------------------------------------------------------
+  info  network      NET_PY           4 hit(s) in edgar_rev.py
+------------------------------------------------------------------------
+RISK SCORE 0/100 — CLEAN
+[3/4] sandbox env: whitelist of 15 vars; 6 secret-shaped var(s) hidden (AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, GIT_EDITOR, ZAI_OAUTH_CLIENT_ID, ZAI_OAUTH_ORIGIN, ZCODE_OFFICIAL_ENDPOINT_TOKEN)
+      network: blocked (python children via sitecustomize guard; other runtimes: reported-only)
+      per-command timeout: 60s
+      commands run inside the sandbox. type 'exit' to close and wipe everything.
+Apple Inc. — CIK 0000320193
+annual revenue, USD millions (10-K, us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax)
+
+FY2017       229,234         —
+FY2018       265,595    +15.9%
+FY2019       260,174     -2.0%
+FY2020       274,515     +5.5%
+FY2021       365,817    +33.3%
+FY2022       394,328     +7.8%
+FY2023       383,285     -2.8%
+FY2024       391,035     +2.0%
+FY2025       416,161     +6.4%
+FY2026       478,834    +15.1%
+      → exit code 0 in 0.1s
+session summary
+  repo        https://github.com/amanvicky/edgar-rev @ bd4578a
+  commands    1
+  env hidden  AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, GIT_EDITOR, ZAI_OAUTH_CLIENT_ID, ZAI_OAUTH_ORIGIN, ZCODE_OFFICIAL_ENDPOINT_TOKEN
+  network     blocked (python children)
+nothing was written outside the sandbox. you were never here.
+
+$ python cleanroom.py run fixtures/sneaky-installer   # answer: n
+== cleanroom ==
+[1/4] copy        fixtures/sneaky-installer
+      ok — commit local, sandbox is a temp dir that will be deleted on exit
+[2/4] triage
+TRIAGE REPORT — fixtures/sneaky-installer
+scanned 5 files  ·  28 findings
+categories: environment=6  exec=2  filesystem=1  install=2  network=3  obfuscation=2  persistence=2  secrets=4  shell=4  typosquat=2
+------------------------------------------------------------------------
+  CRITICAL  secrets      AWS_KEY          uploader.py:15
+      └ AKIAIOSFODNN7EXAMPLE
+  HIGH      exec         DYNAMIC_EXEC_JS  scripts/bootstrap.js:13
+      └ eval(
+  HIGH      exec         DYNAMIC_EXEC_PY  uploader.py:25
+      └ eval(
+  CRITICAL  secrets      GH_TOKEN         uploader.py:16
+      └ ghp_FIXTURE00000000000000000000000000000
+  MED       secrets      HARDCODED_SECRET uploader.py:16
+      └ TOKEN = "ghp_FIXTURE000000000000000000000000000000"
+  MED       secrets      HARDCODED_SECRET uploader.py:17
+      └ token = "fixture-token-please-triage-me-before-running"
+  HIGH      filesystem   HOME_WRITE       uploader.py:41
+      └ expanduser
+  HIGH      install      INSTALL_HOOK     package.json:6
+      └ postinstall: node scripts/bootstrap.js
+  MED       obfuscation  LONG_B64         scripts/bootstrap.js:10
+      └ "VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4
+  MED       obfuscation  LONG_B64         uploader.py:19
+      └ "VGhpcyBpcyBub3QgcmVhbCBtYWx3YXJlLiBJdCBpcyBhIHN5bnRoZXRpYyBmaXh0dXJlIHdyaXR0ZW4
+  CRITICAL  persistence  PERSISTENCE      uploader.py:46
+      └ .bashrc
+  CRITICAL  persistence  PERSISTENCE      uploader.py:47
+      └ .bashrc
+  HIGH      install      PIPED_INSTALL    install.sh:6
+      └ curl https://get.example.com/install.sh | sh
+  HIGH      shell        SHELL_EXEC_JS    scripts/bootstrap.js:7
+      └ execSync
+  HIGH      shell        SHELL_EXEC_JS    scripts/bootstrap.js:7
+      └ child_process
+  HIGH      shell        SHELL_EXEC_JS    scripts/bootstrap.js:16
+      └ execSync
+  HIGH      shell        SHELL_EXEC_PY    uploader.py:37
+      └ subprocess.run
+  MED       typosquat    TYPOSQUAT_HINT   package.json:9
+      └ reqeusts ≈ requests
+  MED       typosquat    TYPOSQUAT_HINT   requirements.txt:2
+      └ reqeusts ≈ requests
+  info  environment  ENV_ACCESS       3 hit(s) in scripts/bootstrap.js, uploader.py
+  info  environment  ENV_READS        3 hit(s) in scripts/bootstrap.js, uploader.py → AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, PATH
+  info  network      NET_PY           3 hit(s) in uploader.py
+------------------------------------------------------------------------
+RISK SCORE 100/100 — DANGEROUS
+env vars it reads: AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, PATH
+run anyway inside the sandbox? [y/N] declined — sandbox wiped [ok], residue: 0
