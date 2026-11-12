@@ -296,3 +296,17 @@ def test_private_network_access_header_present(server):
     with opener.open(req, timeout=10) as r:
         assert r.headers.get("Access-Control-Allow-Private-Network") == "true"
         assert r.headers.get("Access-Control-Allow-Origin") == "*"
+
+
+def test_npm_hints_computed_bridge_side():
+    """The page in this-PC mode only receives file paths, so the bridge —
+    which holds the file contents — must compute the npm start/dev hints
+    itself. Without this, a Node repo gets no 'Start app' row at all."""
+    tree = [("package.json", '{"scripts": {"dev": "next dev", "start": "next start", "test": "vitest run"}}')]
+    hints = bm._npm_hints(tree)
+    assert [h["cmd"] for h in hints] == ["npm run dev", "npm run start"]
+    assert all(h["net"] for h in hints)
+    # broken json and scriptless files are honest empties
+    assert bm._npm_hints([("package.json", "{not json")]) == []
+    assert bm._npm_hints([("package.json", '{"name": "x"}')]) == []
+    assert bm._npm_hints([("README.md", "no package here")]) == []

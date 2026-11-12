@@ -1439,6 +1439,8 @@ async function pcLoadRepo(raw) {
   }
   const hints = [];
   const sig = detectGuiSignals((data.paths || []).map(p => [p, ""]));
+  // npm hints need file contents — the bridge computes them (paths alone can't)
+  const hintsAll = (data.hints && data.hints.length) ? data.hints : sig.hints;
   renderTriCard(rep, raw + " @ " + (data.commit || "?"), (data.paths || []).length);
   const cards = [];
   if (data.tkinter_entry) {
@@ -1448,7 +1450,7 @@ async function pcLoadRepo(raw) {
   if (sig.rails) {
     line("Ruby on Rails app — 'Start app' below runs it here if Ruby is installed on this machine.", "t-dim");
   }
-  for (const h of sig.hints) {
+  for (const h of hintsAll) {
     cards.push({ label: "serve: " + h.label, cmd: "serve " + h.cmd, kind: "serve" });
   }
   if (data.needs_approval) {
@@ -1456,12 +1458,12 @@ async function pcLoadRepo(raw) {
   }
   renderRunCards(cards);
   renderFilePills(data.paths || []);
-  if (sig.hints.length) {
+  if (hintsAll.length) {
     line("run it as a real app (its UI opens in the app screen):", "t-meta");
-    renderPcWebChips(sig.hints);
-    hints.push(...sig.hints);
+    renderPcWebChips(hintsAll);
+    hints.push(...hintsAll);
   }
-  if (data.tkinter_entry || sig.hints.length) showPcWebRow();
+  if (data.tkinter_entry || hintsAll.length) showPcWebRow();
   if (!data.needs_approval) line("type python, 'run <file>', 'serve <cmd>', or 'help'", "t-dim");
   setLiveStatus("this-PC session live — real processes on your machine, wiped clean on exit");
   termInput.focus();

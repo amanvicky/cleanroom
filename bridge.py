@@ -44,6 +44,26 @@ _TK_IMPORT = re.compile(r"(?m)^\s*(?:import\s+tkinter\b|from\s+tkinter\b)")
 _TK_ENTRY_PREFER = ["main.py", "app.py", "gui.py", "demo.py", "run.py", "__main__.py"]
 
 
+def _npm_hints(tree):
+    """npm start/dev suggestions from package.json — the page in this-PC mode
+    only receives file paths, so the bridge (which has the file contents)
+    computes the npm hints itself."""
+    for rel, text in tree:
+        if rel == "package.json" and text:
+            try:
+                pkg = json.loads(text)
+            except ValueError:
+                return []
+            scripts = pkg.get("scripts") or {}
+            out = []
+            for name in ("dev", "start"):
+                if scripts.get(name):
+                    out.append({"label": "npm run " + name,
+                                "cmd": "npm run " + name, "net": True})
+            return out
+    return []
+
+
 def _tkinter_entry(tree):
     """Best entry file to `run` for a tkinter GUI app, or None."""
     candidates = [(rel, "mainloop" in text) for rel, text in tree
@@ -180,6 +200,7 @@ class Bridge:
                 "commit": sess.commit,
                 "net": sess.net,
                 "paths": [rel for rel, _ in tree],
+                "hints": _npm_hints(tree),
                 "tkinter_entry": _tkinter_entry(tree),
             }
 
