@@ -244,10 +244,13 @@ def test_app_proxy_streams_the_running_app_with_embed_headers(server):
           {"cmd": "python -m http.server %d --bind 127.0.0.1" % port}, b.token)
     deadline = time.time() + 10
     while time.time() < deadline:
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})) \
-                .open("http://127.0.0.1:%d/" % port, timeout=2) as r:
-            if r.status == 200:
-                break
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})) \
+                    .open("http://127.0.0.1:%d/" % port, timeout=2) as r:
+                if r.status == 200:
+                    break
+        except Exception:
+            pass  # the server may still be binding — retry
         time.sleep(0.2)
 
     # the token-gated proxy entry streams the document with embed headers
