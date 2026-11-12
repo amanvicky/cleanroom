@@ -97,18 +97,23 @@ uvicorn, which cannot bind in a tab), database-backed apps are limited by what t
 and dev hot-reload doesn't flow through it. The CLI and this-PC mode remain the full-fidelity
 paths.
 
-## Beyond the tab: a full machine, hosted in your browser
+## Any repo, understood and run on your own PC — free
 
-Some repos the tab cannot carry — an ASGI server needing a bound socket, native-binary
-dependencies (torch, faster-whisper, PortAudio…), or a repo with no Python at all. The runner
-names the exact reasons on load, then offers the honest hand-off: **GitHub Codespaces** — a full
-Linux machine hosted by GitHub, opened from your browser with your own account (free tier:
-120 core-hours/month). The app installs there for real — Linux x86 wheels exist for the native
-packages — and its port is forwarded for you to use in the browser.
+For repos beyond the tab's physics — an ASGI server needing a bound socket, native-binary
+dependencies (torch, faster-whisper, PortAudio…), or a repo with no Python at all — the runner
+names the exact reasons on load, then offers the free path: **your own PC is the machine**.
+Switch to "this PC" mode (`python cleanroom.py serve`), paste the repo, and cleanroom understands
+it from its own files — manifests and README — then offers **one card: understand, install & run
+on this PC**. Clicking it builds the chain from what the repo documents (`pip install -r
+requirements.txt`, `npm install && npm run dev`, the README's own run command), runs it inside
+the sandbox with the network the installs need, and when the app serves its port, the app screen
+carries its UI — used in your browser, on your hardware, your bandwidth.
 
-Cleanroom's job does not stop at the link: the triage report is your pre-flight check. On a full
-machine there is **no cleanroom seatbelt** — no scrubbed environment, no network guard, no
-verified wipe — so the report card's findings are the safety review you do before you open one.
+Nothing to pay, no accounts, no metered hours. The seatbelt rides along: scrubbed environment,
+per-command sandbox, and the wipe that re-verifies zero residue — plus the triage report as the
+pre-flight check before anything runs.
+
+![A repo understood from its own files, installed and used on the operator's PC — free](docs/cleanroom-pc-free.png)
 
 ## The app screen: GUI apps run and can be used right there
 

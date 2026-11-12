@@ -310,3 +310,29 @@ def test_npm_hints_computed_bridge_side():
     assert bm._npm_hints([("package.json", "{not json")]) == []
     assert bm._npm_hints([("package.json", '{"name": "x"}')]) == []
     assert bm._npm_hints([("README.md", "no package here")]) == []
+
+
+def test_understand_builds_the_chain_from_the_repos_own_files():
+    """The one-click promise: the bridge reads the repo's manifests and README,
+    then hands the page a ready-made chain — install, then run. Free: the
+    operator's PC is the machine."""
+    tree = [
+        ("README.md", "## run\n\npip install flask\n\n```bash\npython app.py\n```"),
+        ("app.py", "from flask import Flask\napp = Flask(__name__)"),
+        ("requirements.txt", "flask\n"),
+    ]
+    su = bm._understand(tree)
+    assert su["kind"] == "wsgi"
+    assert su["installs"] == ["flask"]
+    assert su["install_cmds"] == ["pip install -r requirements.txt"]
+    assert su["run_cmd"] == "python app.py"
+    assert su["chain"] == "pip install -r requirements.txt && python app.py"
+    assert su["needs_net"] is True
+
+    node_tree = [("package.json", '{"scripts": {"dev": "next dev"}}')]
+    su2 = bm._understand(node_tree)
+    assert su2["kind"] == "node" and su2["run_cmd"] == "npm run dev"
+    assert su2["chain"] == "npm install && npm run dev"
+
+    su3 = bm._understand([("README.md", "just docs")])
+    assert su3["chain"] is None and su3["kind"] == "cli"

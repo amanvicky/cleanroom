@@ -4,7 +4,7 @@
    engine — the security engine has its own parity gate. */
 
 import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup,
-         fullMachineReasons, codespacesUrl } from "./runner_core.js";
+         fullMachineReasons } from "./runner_core.js";
 import { TEXT_RULES } from "./cleanroom.js";
 
 let failed = 0;
@@ -159,10 +159,6 @@ const fmNone = fullMachineReasons(parseSetup(new Map([["requirements.txt", "flas
 ok(fmNone.length === 0, "fullMachineReasons: a WSGI repo with pure deps stays in-tab");
 const fmNoPy = fullMachineReasons(parseSetup(new Map([["package.json", "{}"]])), null, false);
 ok(fmNoPy.some(r => r.startsWith("no runnable Python")), "fullMachineReasons: non-Python repo named");
-ok(codespacesUrl("https://github.com/nahcmon/STT-with-Summarization-Fully-Local") ===
-   "https://codespaces.new/nahcmon/STT-with-Summarization-Fully-Local?quickstart=1",
-   "codespacesUrl: quick-create deep link");
-ok(codespacesUrl("not a repo") === null, "codespacesUrl: null for junk input");
 
 console.log(failed ? "runner-check: FAILED" : "runner-check: all good");
 process.exitCode = failed ? 1 : 0;

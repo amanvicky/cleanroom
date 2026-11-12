@@ -14,7 +14,7 @@
 
 import { fetchRepoFiles } from "./repo_fetch.js";
 import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup,
-         fullMachineReasons, codespacesUrl } from "./runner_core.js";
+         fullMachineReasons } from "./runner_core.js";
 import { scanTree } from "./cleanroom.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
@@ -240,11 +240,23 @@ function renderRunCards(items) {
       continue;
     }
     const b = document.createElement("button");
-    b.className = "runcard" + (it.kind === "approve" ? " danger" : "");
+    b.className = "runcard" + (it.kind === "approve" ? " danger" : "")
+                + (it.kind === "autorun" ? " autorun" : "");
     b.innerHTML = "▶ <b></b>";
     b.querySelector("b").textContent = it.label;
-    b.title = it.cmd;
-    b.addEventListener("click", () => runCommand(it.cmd));
+    b.title = it.title || it.cmd;
+    b.addEventListener("click", () => {
+      if (it.kind === "autorun" && mode === "pc") {
+        // the bridge built this chain from the repo's own README/manifests —
+        // fill the start row and go, with network on if installs need it
+        pcWebCmd.value = it.cmd;
+        pcWebNet.checked = !!it.net;
+        showPcWebRow();
+        pcWebStartFn();
+        return;
+      }
+      runCommand(it.cmd);
+    });
     runRow.appendChild(b);
   }
   runRow.classList.remove("hidden");
@@ -1659,25 +1671,14 @@ async function vmLoadRepo(raw) {
     line("FastAPI is ASGI — the in-tab transport serves WSGI apps; this one would "
          + "need uvicorn, which cannot bind in a tab. honest miss for now.", "t-dim");
   }
-  // beyond the tab: name the reasons, hand off to a full machine in the browser
+  // beyond the tab: name the reasons — the free hand-off is the operator's PC
   const hasRunnablePy = files.some(([p]) => /\.py$/i.test(p));
   const fm = fullMachineReasons(setup, sig, hasRunnablePy);
   if (fm.length) {
-    const csUrl = codespacesUrl(liveUrl.value || raw);
     for (const r of fm) line("beyond the tab: " + r, "t-dim");
-    if (rep.verdict === "dangerous" || rep.verdict === "high-risk") {
-      line("the full machine has NO cleanroom seatbelt: no env scrub, no network "
-           + "guard, no wipe. the triage report above is your pre-flight check — "
-           + "read the findings before you open it.", "t-err");
-    }
-    if (csUrl) {
-      cards.push({ kind: "link", href: csUrl,
-                   label: "open a full machine — GitHub Codespaces (in your browser)",
-                   title: csUrl });
-      line("the browser CAN host a full Linux machine for this repo: GitHub "
-           + "Codespaces — your GitHub account, free tier, the app's port forwarded "
-           + "to you. pip install works there for everything native.", "t-dim");
-    }
+    line("the free way to run THIS repo: switch to 'this PC' mode (python cleanroom.py serve) — "
+         + "cleanroom understands the repo there, installs its requirements in the sandbox and "
+         + "serves the app. your hardware, your bandwidth, nothing to pay.", "t-dim");
   }
   renderRunCards(cards);
   if (!files.some(([p]) => /\.py$/i.test(p))) {
@@ -1756,6 +1757,21 @@ async function pcLoadRepo(raw) {
   }
   renderRunCards(cards);
   renderFilePills(data.paths || []);
+  // the free, automatic path: the bridge understood the repo — one card runs it
+  const su = data.setup;
+  if (su && su.chain) {
+    line("understood from the repo's own files: " +
+         (su.installs.length ? su.installs.length + " requirement(s) · " : "") +
+         "run: " + su.run_cmd, "t-dim");
+    cards.push({
+      label: "understand, install & run on this PC — free",
+      cmd: su.chain,
+      kind: "autorun",
+      net: !!su.needs_net,
+      title: su.chain,
+    });
+    renderRunCards(cards);
+  }
   if (hintsAll.length) {
     line("run it as a real app (its UI opens in the app screen):", "t-meta");
     renderPcWebChips(hintsAll);

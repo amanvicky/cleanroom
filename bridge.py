@@ -64,6 +64,92 @@ def _npm_hints(tree):
     return []
 
 
+def _understand(tree):
+    """README-and-manifest understanding for this-PC mode: what to install,
+    what to run, and a ready-made command chain the page can start with one
+    click. The chain executes inside the sandbox (scrubbed env, wiped after),
+    so the operator's PC never runs the repo bare."""
+    files = {}
+    for rel, text in tree:
+        if text:
+            files[rel.lower()] = text
+    paths = set(files)
+    installs, install_cmds, run_cmds = [], [], []
+    kind = "cli"
+
+    # manifests → install commands
+    req_files = sorted(p for p in paths if p.startswith("requirements") and p.endswith(".txt"))
+    if req_files:
+        install_cmds.append("pip install " + " ".join("-r " + p for p in req_files))
+        for p in req_files:
+            for raw in files[p].split("\n"):
+                s = raw.strip()
+                if not s or s.startswith(("#", "-")):
+                    continue
+                name = re.split(r"[=<>~! \[;]", s)[0].strip().lower()
+                if name and re.match(r"^[a-z0-9._-]+$", name) and name not in installs:
+                    installs.append(name)
+    if "pyproject.toml" in paths and not req_files:
+        install_cmds.append("pip install .")
+    if "package.json" in paths:
+        install_cmds.append("npm install")
+        kind = "node"
+
+    # what kind of app is this?
+    if "manage.py" in paths or "django" in installs:
+        kind = "wsgi-django"
+    elif any(re.search(r"\bFlask\s*\(", t) for p, t in files.items() if p.endswith(".py")) or \
+            "flask" in installs:
+        kind = "wsgi"
+    elif any(re.search(r"\bFastAPI\s*\(", t) for p, t in files.items() if p.endswith(".py")) or \
+            "fastapi" in installs:
+        kind = "asgi"
+    elif "gemfile" in paths:
+        kind = "rails"
+
+    # run commands, most-specific first
+    pkg = None
+    if "package.json" in paths:
+        try:
+            pkg = json.loads(files["package.json"])
+        except ValueError:
+            pkg = None
+    if pkg and (pkg.get("scripts") or {}).get("dev"):
+        run_cmds.append("npm run dev")
+    for p in sorted(paths):
+        if p.endswith((".md", ".rst", ".txt")) and p.startswith("readme"):
+            for m in re.finditer(r"(?m)^\s*(?:python|npm|pip|cargo|go|bundle)\s+[^\n]{2,90}$",
+                                 files[p]):
+                c = m.group(0).strip()
+                if not c.startswith("pip install") and c not in run_cmds:
+                    run_cmds.append(c)
+            break
+    if kind == "wsgi":
+        app_file = next((p for p in sorted(paths)
+                         if p.endswith("app.py") and "flask" in files[p]), None)
+        if app_file:
+            run_cmds.append("python " + app_file)
+    if "manage.py" in paths:
+        run_cmds.append("python manage.py runserver 127.0.0.1:8000")
+    if kind == "node" and pkg and (pkg.get("scripts") or {}).get("start"):
+        run_cmds.append("npm start")
+    entry = _tkinter_entry(tree)
+    if entry and "python " + entry not in run_cmds:
+        run_cmds.append("python " + entry)
+
+    run_cmd = run_cmds[0] if run_cmds else None
+    chain = " && ".join(install_cmds + [run_cmd]) if (install_cmds or run_cmd) and run_cmd else None
+    return {
+        "kind": kind,
+        "installs": installs,
+        "install_cmds": install_cmds,
+        "run_cmd": run_cmd,
+        "run_cmds": run_cmds,
+        "chain": chain,
+        "needs_net": bool(install_cmds) or kind == "node",
+    }
+
+
 def _tkinter_entry(tree):
     """Best entry file to `run` for a tkinter GUI app, or None."""
     candidates = [(rel, "mainloop" in text) for rel, text in tree
@@ -201,6 +287,7 @@ class Bridge:
                 "net": sess.net,
                 "paths": [rel for rel, _ in tree],
                 "hints": _npm_hints(tree),
+                "setup": _understand(tree),
                 "tkinter_entry": _tkinter_entry(tree),
             }
 

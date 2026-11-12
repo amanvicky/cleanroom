@@ -527,3 +527,6 @@ footer a:hover { color: var(--accent); }
 .runcard.full {
   background: #0d1a2b; color: #7ec8e8; border-color: #1d3d5c;
 }
+.runcard.autorun {
+  background: #0d1a2b; color: #7ec8e8; border-color: #1d3d5c;
+}
