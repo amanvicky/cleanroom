@@ -48,6 +48,29 @@ the commit it was verified at.
 Because the VM is a browser tab, "runs virtually without disturbing anything" is structural, not
 promised: the repo never sees your files, your environment variables, or your network.
 
+### What the in-tab VM uses of your PC — honestly
+
+The page tells you exactly what it can reach, before you run anything (the spec chips above the
+box, straight from the browser — no bridge, nothing uploaded):
+
+- **All logical cores, for real.** Browsers only grant `SharedArrayBuffer` — Web Workers sharing
+  memory, which is what Pyodide's pthread pool and numpy's threaded OpenBLAS run on — to
+  cross-origin isolated pages. GitHub Pages can't send the required COOP/COEP headers, so a
+  small service worker (`sw_coi.js`) adds them to this page's own responses. Nothing is proxied
+  or cached by it. The first visit reloads once while the worker installs; the chip then reads
+  **multi-core: enabled**, and numpy uses your cores.
+- **RAM, capped by the browser.** The page reports what the browser tells it (device memory is
+  browser-capped and approximate); the WebAssembly VM itself can address a few GB at most.
+- **GPU reported, not usable by numpy.** The renderer string and WebGPU availability are shown;
+  Python-side numpy cannot use them. A JS demo could.
+- **This-PC mode under an isolated tab:** an isolated page may only embed responses carrying
+  CORP/COEP headers, which a real app server doesn't send — so the app screen streams through
+  the bridge (`/api/app/<port>/`, token-gated, loopback-only): the bridge adds the embed
+  headers, the app's own absolute-path requests route to the running server. Unisolated
+  browsers embed the app directly as before.
+- **Never:** your disk, real processes, uncapped memory. A browser tab cannot give those to
+  anything — that is the isolation, and it's why "this PC" mode exists as the honest full-PC path.
+
 ## The app screen: GUI apps run and can be used right there
 
 A REPL is for reading output. Many repos are **apps** — and the runner opens an **app screen**
@@ -196,7 +219,7 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 | browser VM isolation | WebAssembly tab, no disk, no sockets | everywhere, all repos (pure Python) |
 | **app screen — virtual tkinter** | a tkinter *subset* as HTML widgets; unsupported features are counted and named | browser VM |
 | **app screen — web preview** | sandboxed frame, inlined assets, no origin, no storage, no network | browser VM |
-| **app screen — real server UI** | this-PC bridge runs the app; the page embeds `127.0.0.1:<port>` | CLI bridge + this-PC mode |
+| **app screen — real server UI** | this-PC bridge runs the app; the page embeds `127.0.0.1:<port>` directly, or through the bridge's embed-header proxy when the tab is multi-core isolated | CLI bridge + this-PC mode |
 | **disposable venv** | `python -m venv` inside the sandbox — pip installs never touch the real Python | CLI + this-PC mode, all OSes |
 | ephemeral clone + wipe verification | `mkdtemp` → delete → residue re-scan | CLI, all OSes |
 | secret-scrubbed environment | whitelist env for children | CLI, all OSes |
@@ -221,7 +244,7 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-36 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+37 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
 the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
 and wipes — no mocks. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
 JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations and the shelf's shape.

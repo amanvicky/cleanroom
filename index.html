@@ -10,6 +10,25 @@
   <meta property="og:description" content="Paste a repo link → a disposable Python VM boots in this tab → use the repo live. Free. No install. Close the tab and it's gone.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Crect x='12' y='12' width='40' height='40' rx='6' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3Cpath d='M20 32l8 8 16-16' fill='none' stroke='%2300e5a0' stroke-width='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
+  <script>
+  /* Cross-origin isolation (sw_coi.js adds the COOP/COEP headers GitHub
+     Pages can't) unlocks SharedArrayBuffer — the in-tab VM's Web Workers and
+     numpy's threaded BLAS. The page reloads at most once, on the first visit
+     after the worker installs. */
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register("./sw_coi.js").catch(function () {});
+    navigator.serviceWorker.ready.then(function () {
+      try {
+        if (!window.crossOriginIsolated && !sessionStorage.getItem("cr-coi-tried")) {
+          sessionStorage.setItem("cr-coi-tried", "1");
+          location.reload();
+        } else if (window.crossOriginIsolated) {
+          sessionStorage.removeItem("cr-coi-tried");
+        }
+      } catch (e) { /* storage refused — skip the reload dance */ }
+    });
+  }
+  </script>
 </head>
 <body>
   <header>
@@ -29,6 +48,10 @@
         <label><input type="radio" name="runmode" value="vm" checked> in-tab VM</label>
         <label><input type="radio" name="runmode" value="pc"> this PC — real processes</label>
         <span class="mode-hint">this-PC mode needs <code>python cleanroom.py serve</code> running locally</span>
+      </div>
+      <div class="mode-row" id="vmSpecsRow">
+        <span class="mode-hint">your device, as this tab honestly sees it:</span>
+        <span id="vmSpecs"></span>
       </div>
       <div class="pc-row hidden" id="pcRow">
         <input id="pcToken" placeholder="bridge token (shown by cleanroom serve)" spellcheck="false" autocomplete="off">

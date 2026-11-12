@@ -15,6 +15,8 @@ import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -28,6 +30,13 @@ VERSION = "0.1.5"
 # the read-only file viewer's per-file cap (bytes); bigger files report
 # their size instead of their contents
 FILE_VIEW_MAX_BYTES = 256 * 1024
+
+# the app-proxy: when the page is cross-origin isolated (multi-core VM), a
+# cross-origin iframe may only embed responses that carry CORP/COEP headers
+# — and a real server you serve can't be asked to send them. The bridge
+# streams the app's responses and adds them itself. Only loopback ports,
+# one server at a time.
+_APP_PROXY_MAX_BYTES = 32 * 1024 * 1024
 
 # a file that imports tkinter means the repo has a Python GUI — on a real PC
 # it opens a real window on the operator's desktop
@@ -98,6 +107,33 @@ class Bridge:
         self.token = "-".join(uuid.uuid4().hex[:4] for _ in range(2)).upper()
         self.session = None
         self.lock = threading.Lock()
+        self.active_web_port = None
+
+    def app_proxy_fetch(self, port, rest, method, body, ctype, query):
+        """Stream one response from the running app at 127.0.0.1:<port>, with
+        the embed headers an isolated page requires. Never executes anything;
+        only ever talks to loopback."""
+        if not (1024 <= port <= 65535):
+            return 400, "text/plain", b"bad port"
+        url = "http://127.0.0.1:%d/%s%s" % (port, rest,
+                                            ("?" + query) if query else "")
+        req = urllib.request.Request(url, data=body if method in ("POST", "PUT") else None,
+                                     method=method)
+        if ctype:
+            req.add_header("Content-Type", ctype)
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=30) as r:
+                data = r.read(_APP_PROXY_MAX_BYTES)
+                out_ct = r.headers.get("Content-Type", "application/octet-stream")
+                return r.status, out_ct, data
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, e.headers.get("Content-Type", "text/plain"), e.read(_APP_PROXY_MAX_BYTES)
+            except Exception:
+                return 502, "text/plain", ("app proxy error: %s" % e).encode()
+        except Exception as e:
+            return 502, "text/plain", ("app proxy error: %s" % e).encode()
 
     def state(self):
         s = self.session
@@ -354,10 +390,42 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _serve_app_proxy(self, port, rest, method, query, body, ctype):
+        status, out_ct, data = self.bridge.app_proxy_fetch(
+            port, rest, method, body, ctype, query)
+        self._raw(status, out_ct, data, {
+            "Cross-Origin-Resource-Policy": "cross-origin",
+            "Cross-Origin-Embedder-Policy": "credentialless",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+        })
+
+    def _raw(self, status, ctype, data, extra=None):
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         u = urlparse(self.path)
         qs = parse_qs(u.query)
         body = {}
+        m = re.match(r"^/api/app/(\d+)(/.*)?$", u.path)
+        if m:
+            if not self._token_ok(qs, body):
+                return self._reply({"ok": False, "needs_token": True}, 401)
+            self.bridge.active_web_port = int(m.group(1))
+            return self._serve_app_proxy(int(m.group(1)), m.group(2) or "/",
+                                         "GET", u.query, None, None)
+        # the app's own absolute-path subrequests land at the bridge root;
+        # only one app server runs at a time, so route them to it
+        if self.bridge.active_web_port and not u.path.startswith("/api/"):
+            return self._serve_app_proxy(self.bridge.active_web_port, u.path,
+                                         "GET", u.query, None, None)
         if u.path == "/api/status":
             if not self._token_ok(qs, body):
                 return self._reply({"ok": False, "needs_token": True}, 401)
@@ -376,8 +444,21 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b""
+        m = re.match(r"^/api/app/(\d+)(/.*)?$", u.path)
+        if m:
+            if not self._token_ok(parse_qs(u.query), {}):
+                return self._reply({"ok": False, "needs_token": True}, 401)
+            self.bridge.active_web_port = int(m.group(1))
+            return self._serve_app_proxy(int(m.group(1)), m.group(2) or "/",
+                                         "POST", u.query, raw,
+                                         self.headers.get("Content-Type"))
+        if self.bridge.active_web_port and not u.path.startswith("/api/"):
+            return self._serve_app_proxy(self.bridge.active_web_port, u.path,
+                                         "POST", u.query, raw,
+                                         self.headers.get("Content-Type"))
         try:
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            body = json.loads(raw.decode("utf-8")) if raw else {}
         except ValueError:
             return self._reply({"ok": False, "error": "bad json"}, 400)
         if not self._token_ok({}, body):

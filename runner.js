@@ -75,6 +75,11 @@ document.querySelectorAll('input[name="runmode"]').forEach(radio => {
   radio.addEventListener("change", () => {
     mode = document.querySelector('input[name="runmode"]:checked').value;
     pcRow.classList.toggle("hidden", mode !== "pc");
+    const vmSpecsRow = document.getElementById("vmSpecsRow");
+    if (vmSpecsRow) {
+      vmSpecsRow.classList.toggle("hidden", mode !== "vm");
+      if (mode === "vm") renderVmSpecs();
+    }
     if (pcWebRow) pcWebRow.classList.toggle("hidden", mode !== "pc" || !pcWebRow.dataset.shown);
     if (mode === "vm") {
       setLiveStatus(pyodide ? "in-tab VM — close the tab and nothing remains"
@@ -150,6 +155,38 @@ function deviceInfo() {
   } catch (e) { /* none */ }
   return parts.join(" · ") || "your device's CPU";
 }
+
+function multiCoreOn() {
+  return window.crossOriginIsolated === true && typeof SharedArrayBuffer !== "undefined";
+}
+
+/* the in-tab VM's honest device panel: what this tab can actually see and
+   use. Rendered at startup and refreshed when the mode changes. */
+function renderVmSpecs() {
+  const row = document.getElementById("vmSpecs");
+  if (!row) return;
+  row.replaceChildren();
+  const chips = [];
+  try { chips.push(navigator.platform || "unknown platform"); } catch (e) { /* none */ }
+  try { if (navigator.hardwareConcurrency) chips.push(navigator.hardwareConcurrency + " logical cores"); } catch (e) { /* none */ }
+  try { if (navigator.deviceMemory) chips.push("≥" + navigator.deviceMemory + " GB RAM (browser-reported)"); } catch (e) { /* none */ }
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    const ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    if (ext) chips.push("GPU: " + String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).slice(0, 40));
+  } catch (e) { /* none */ }
+  chips.push("WebGPU: " + ("gpu" in navigator ? "available" : "no"));
+  chips.push(multiCoreOn()
+    ? "multi-core: enabled (Web Workers + SharedArrayBuffer)"
+    : "multi-core: single-thread (the browser did not isolate this tab)");
+  for (const txt of chips) {
+    const chip = document.createElement("span");
+    chip.className = "chip " + (txt.startsWith("multi-core: enabled") ? "info" : "env");
+    chip.textContent = txt;
+    row.appendChild(chip);
+  }
+}
+renderVmSpecs();
 
 function line(text, cls) {
   const el = document.createElement("div");
@@ -417,8 +454,9 @@ async function ensureVM(onStatus) {
       if (!window.loadPyodide) {
         onStatus("fetching the in-browser Python VM (one-time, ~10 MB, cached by your browser)…");
         await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = PYODIDE_BASE + "pyodide.js";
+        const s = document.createElement("script");
+        s.src = PYODIDE_BASE + "pyodide.js";
+        s.crossOrigin = "anonymous";  // COEP require-corp: CDN scripts need CORS mode
           s.onload = resolve;
           s.onerror = () => reject(new Error("could not fetch the Python VM from the CDN"));
           document.head.appendChild(s);
@@ -1171,8 +1209,17 @@ function addPortChip(port) {
   b.textContent = "open 127.0.0.1:" + port;
   b.addEventListener("click", () => {
     webFrame.removeAttribute("srcdoc");
-    webFrame.src = "http://127.0.0.1:" + port;
-    webUrl.textContent = "http://127.0.0.1:" + port + " — the app's own UI, served by your PC";
+    if (multiCoreOn()) {
+      // an isolated tab may only embed responses that carry CORP/COEP
+      // headers — the bridge streams the app and adds them
+      webFrame.src = bridge.base + "/api/app/" + port + "/?token=" +
+                     encodeURIComponent(bridge.token);
+      webUrl.textContent = "the app at http://127.0.0.1:" + port +
+                           ", streamed through the bridge proxy (isolated tab)";
+    } else {
+      webFrame.src = "http://127.0.0.1:" + port;
+      webUrl.textContent = "http://127.0.0.1:" + port + " — the app's own UI, served by your PC";
+    }
   });
   pcWebChips.appendChild(b);
 }
@@ -1309,7 +1356,9 @@ async function vmLoadRepo(raw) {
   vmFiles = files;
   line("── loaded " + label + " ──", "t-meta");
   line(runnable.length + runnableDeep.length + " files → /repo (virtual, in-memory only)", "t-dim");
-  line("on your device: " + deviceInfo(), "t-dim");
+  line("on your device: " + deviceInfo() +
+       (multiCoreOn() ? " · multi-core enabled (numpy's threads run on your cores)"
+                      : " · single-thread (the browser did not isolate this tab)"), "t-dim");
   const sig = detectGuiSignals(files);
   const rep = scanTree(files);
   line("triage: " + rep.score + "/100 " + rep.verdict.toUpperCase() +

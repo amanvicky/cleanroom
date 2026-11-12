@@ -231,6 +231,50 @@ def test_web_start_reopens_sandbox_with_network_allowed(server):
     _post(base, "/api/wipe", {}, b.token)
 
 
+def test_app_proxy_streams_the_running_app_with_embed_headers(server):
+    """An isolated page may only embed responses carrying CORP/COEP headers,
+    which the app's own server doesn't send — the bridge streams them and
+    adds the headers itself, and routes the app's own absolute-path
+    subrequests to the remembered port."""
+    import sandbox
+    b, base = server
+    port = _free_port()
+    _post(base, "/api/open", {"url": _fixture("benign-notes-app")}, b.token)
+    _post(base, "/api/web",
+          {"cmd": "python -m http.server %d --bind 127.0.0.1" % port}, b.token)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})) \
+                .open("http://127.0.0.1:%d/" % port, timeout=2) as r:
+            if r.status == 200:
+                break
+        time.sleep(0.2)
+
+    # the token-gated proxy entry streams the document with embed headers
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(base + "/api/app/%d/?token=%s" % (port, b.token), timeout=10) as r:
+        assert r.status == 200
+        assert r.headers.get("Cross-Origin-Resource-Policy") == "cross-origin"
+        assert r.headers.get("Cross-Origin-Embedder-Policy") == "credentialless"
+        assert b"gui_notes.py" in r.read()  # the fixture's root is a listing
+    # a real document through the same proxy path
+    with opener.open(base + "/api/app/%d/webapp/index.html?token=%s" % (port, b.token),
+                     timeout=10) as r:
+        assert r.status == 200 and b"Notes" in r.read()
+    # no token, no proxy tunnel to an arbitrary local port
+    try:
+        opener.open(base + "/api/app/%d/" % port, timeout=10)
+        raise AssertionError("proxy without token must be refused")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+    # the app's own absolute-path subrequest lands at the bridge root and is
+    # routed to the remembered port
+    with opener.open(base + "/webapp/index.html", timeout=10) as r:
+        assert r.status == 200 and b"replaceChildren" in r.read()
+    _post(base, "/api/web_stop", {}, b.token)
+    _post(base, "/api/wipe", {}, b.token)
+
+
 def test_web_start_needs_approval_for_dangerous(server):
     b, base = server
     _post(base, "/api/open", {"url": _fixture("sneaky-installer")}, b.token)
