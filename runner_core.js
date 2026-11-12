@@ -147,7 +147,83 @@ export const SHELF = [
     what: "diagnose a messy CSV from examples/ — types, nulls, duplicates", at: "0f62878" },
   { repo: "https://github.com/amanvicky/fine-tune-prep",
     what: "inspect and validate a chat JSONL dataset before fine-tuning", at: "7dc4090" },
+  { repo: "https://github.com/amanvicky/flask-notes-demo",
+    what: "a real Flask app served through the page's virtual network — add and delete notes", at: "61ec690" },
 ];
+
+/* README-and-manifest understanding for Python repos: what to install and
+   what to run. Convenience guidance only — the security engine lives in
+   cleanroom.js / triage.py. Node-testable (runner-check.mjs). */
+export function parseSetup(files) {
+  const byPath = new Map(files);
+  const textOf = p => byPath.get(p) || "";
+  const paths = [...byPath.keys()];
+  const out = { installs: [], runCommands: [], notes: [], appKind: "cli" };
+
+  // requirements files: one requirement per line, comments and -r/-- flags out
+  for (const p of paths.filter(p => /requirements[^/]*\.txt$/i.test(p))) {
+    for (const raw of textOf(p).split("\n")) {
+      const s = raw.trim();
+      if (!s || s.startsWith("#") || s.startsWith("-")) continue;
+      const name = s.split(/[;=\[><~ ]/)[0].trim().toLowerCase();
+      if (name && !out.installs.includes(name)) out.installs.push(name);
+    }
+  }
+  // pyproject [project] dependencies + setup.py install_requires
+  const pyproject = textOf("pyproject.toml");
+  const depBlock = /dependencies\s*=\s*\[([^\]]*)\]/s.exec(pyproject);
+  if (depBlock) {
+    for (const m of depBlock[1].matchAll(/["']([^"']+)["']/g)) {
+      const name = m[1].split(/[;=\[><~ ]/)[0].trim().toLowerCase();
+      if (name && /^[a-z0-9._-]+$/.test(name) && !out.installs.includes(name)) {
+        out.installs.push(name);
+      }
+    }
+  }
+  const reqRe = /install_requires\s*=\s*\[([^\]]*)\]/s.exec(textOf("setup.py"));
+  if (reqRe) {
+    for (const m of reqRe[1].matchAll(/["']([^"']+)["']/g)) {
+      const name = m[1].split(/[;=\[><~ ]/)[0].trim().toLowerCase();
+      if (name && /^[a-z0-9._-]+$/.test(name) && !out.installs.includes(name)) {
+        out.installs.push(name);
+      }
+    }
+  }
+  if (out.installs.length) {
+    out.notes.push("found " + out.installs.length + " requirement(s) in the repo's manifests");
+  }
+
+  // README: pip install / python <file> commands a human would copy
+  const readmePath = paths.find(p => /^readme(\.md|\.rst|\.txt)?$/i.test(p));
+  if (readmePath) {
+    const md = textOf(readmePath);
+    for (const m of md.matchAll(/(?:^|[{`\n ])pip install ([^\n`"]{2,80})/gi)) {
+      const args = m[1].trim().replace(/`.*$/, "").trim();
+      if (args && !out.runCommands.some(c => c.cmd === args)) {
+        out.runCommands.push({ kind: "install", cmd: args });
+      }
+    }
+    for (const m of md.matchAll(/(?:^|[{`\n ])python ([A-Za-z0-9_./-]+\.py)\b/g)) {
+      const f = m[1].replace(/^\.\//, "");
+      if (paths.includes(f) && !out.runCommands.some(c => c.cmd === "run " + f)) {
+        out.runCommands.push({ kind: "run", cmd: "run " + f });
+      }
+    }
+    if (/flask/i.test(md) && out.appKind === "cli") out.appKind = "wsgi";
+    if (/django/i.test(md) && out.appKind === "cli") out.appKind = "wsgi";
+  }
+
+  // manifest-and-code reality beats README wording
+  if (out.installs.includes("flask") || paths.some(p => /(^|\/)app\.py$/i.test(p) && /Flask\s*\(/.test(textOf(p)))) {
+    out.appKind = "wsgi";
+  } else if (out.installs.includes("django") || paths.includes("manage.py")) {
+    out.appKind = "wsgi";
+  } else if (out.installs.includes("fastapi") || paths.some(p => /\.py$/i.test(p) && /FastAPI\s*\(/.test(textOf(p)))) {
+    out.appKind = "asgi";
+  }
+  // tkinter detection lives in detectGuiSignals; the runner combines both.
+  return out;
+}
 
 /* Pull localhost ports a server prints while starting up, in output order.
    Matches the shapes real servers actually print:

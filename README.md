@@ -71,6 +71,32 @@ box, straight from the browser — no bridge, nothing uploaded):
 - **Never:** your disk, real processes, uncapped memory. A browser tab cannot give those to
   anything — that is the isolation, and it's why "this PC" mode exists as the honest full-PC path.
 
+## A server app in the tab: the virtual network
+
+Flask and Django can't *listen* in the VM — no sockets, that's the sandbox. But they don't need
+to: the runner reads the repo's README and manifests (`requirements.txt`, `pyproject.toml`,
+`setup.py`), installs the requirements **into the in-tab VM** — pure-Python wheels arrive through
+your browser's own fetch, and every package gets an honest verdict: ones needing compiled
+binaries are named and refused, never silently skipped. Then it mounts the WSGI app and serves it
+**through the page itself**: the browser asks, the VM answers. The app screen's frame becomes the
+app's UI — forms POST, redirects follow, links navigate — while nothing listens on any machine
+and nothing escapes the tab.
+
+```
+repo> setup
+── setting up (1 requirement) — installing into the VM ──
+  ✓ flask — installed from pure-Python wheels from PyPI (via your browser's own fetch)
+setup: 1 installed
+── mounting the WSGI app inside the VM — its only network is this page ──
+```
+
+![Flask app served through the page's virtual network, used inside the app screen](docs/cleanroom-wsgi.png)
+
+Honest edges of the virtual network: it speaks WSGI (Flask works; FastAPI/ASGI would need
+uvicorn, which cannot bind in a tab), database-backed apps are limited by what the VM can load,
+and dev hot-reload doesn't flow through it. The CLI and this-PC mode remain the full-fidelity
+paths.
+
 ## The app screen: GUI apps run and can be used right there
 
 A REPL is for reading output. Many repos are **apps** — and the runner opens an **app screen**

@@ -3,7 +3,7 @@
    and the curated shelf. These are convenience guidance, not the security
    engine — the security engine has its own parity gate. */
 
-import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps } from "./runner_core.js";
+import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup } from "./runner_core.js";
 import { TEXT_RULES } from "./cleanroom.js";
 
 let failed = 0;
@@ -119,6 +119,28 @@ for (const e of SHELF) {
   if (!/^[0-9a-f]{7,40}$/.test(e.at || "")) shelfOk = false;
 }
 ok(shelfOk, "shelf entries: unique repos, a 'what you'll see' line, a verified commit");
+
+/* parseSetup: manifests + README → install list, run commands, app kind */
+const setup1 = parseSetup(new Map([
+  ["requirements.txt", "# web app\nflask==3.0.0\n-r other.txt\n\nrequests>=2.0 ; python_version>'3'\n"],
+  ["README.md", "Install:\n```\npip install flask\n```\nRun:\n```\npython app.py\n```\nA flask application."],
+  ["app.py", "from flask import Flask\napp = Flask(__name__)"],
+]));
+ok(setup1.installs.join(",") === "flask,requests",
+   "parseSetup requirements: deduped, flags/comments/markers stripped (got: " + setup1.installs.join(",") + ")");
+ok(setup1.runCommands.some(c => c.kind === "install" && c.cmd === "flask"), "parseSetup reads pip install from the README");
+ok(setup1.runCommands.some(c => c.kind === "run" && c.cmd === "run app.py"), "parseSetup reads the run file from the README (only real files)");
+ok(setup1.appKind === "wsgi", "parseSetup: flask repo detected as wsgi");
+const setup2 = parseSetup(new Map([
+  ["pyproject.toml", '[project]\ndependencies = ["rich>=13", "click"]\n'],
+  ["setup.py", "setup(\n    install_requires=[\"numpy\"],\n)"],
+  ["main.py", "print(1)"],
+]));
+ok(setup2.installs.join(",") === "rich,click,numpy",
+   "parseSetup: pyproject + setup.py requirements merged (got: " + setup2.installs.join(",") + ")");
+ok(setup2.appKind === "cli", "parseSetup: plain repo stays cli");
+const setup3 = parseSetup(new Map([["manage.py", ""], ["README.md", "a django blog"]]));
+ok(setup3.appKind === "wsgi" && !setup3.installs.length, "parseSetup: django via manage.py, no installs");
 
 console.log(failed ? "runner-check: FAILED" : "runner-check: all good");
 process.exitCode = failed ? 1 : 0;

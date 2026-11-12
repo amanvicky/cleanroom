@@ -13,7 +13,7 @@
        local bridge and the app's own UI opens at 127.0.0.1:<port> in-frame */
 
 import { fetchRepoFiles } from "./repo_fetch.js";
-import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps } from "./runner_core.js";
+import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup } from "./runner_core.js";
 import { scanTree } from "./cleanroom.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
@@ -427,13 +427,16 @@ const HELP = [
   "  run <file.py>    execute a file from the repo (its output prints here)",
   "  ls               list the files loaded into the virtual machine",
   "  pip <package>    install a package into the VM (numpy, pandas, micropip wheels)",
+  "  setup            install the repo's own requirements (from its manifests + README), honestly per package",
+  "  serve            mount the repo's Flask/Django app in the VM and serve it through this page's virtual network",
   "  preview          open a static web app (index.html) sandboxed in the app screen",
   "  clear            clear this terminal",
   "  wipe             erase everything: files, variables, modules — residue: 0",
   "  anything else    runs as Python in the repo's directory",
   "notes:",
-  "  the VM has no network sockets — code cannot phone home",
+  "  the VM has no network sockets — code cannot phone home; server apps run behind the page's virtual network",
   "  tkinter apps render on the app screen (virtual tkinter: real HTML widgets, a subset)",
+  "  packages with compiled binaries can't load in a tab — the catalog and pure-Python wheels can",
   "  input() is not wired up — assign values directly in code",
   "  an infinite loop freezes the tab — refresh to recover, nothing was saved anyway",
   "  closing this tab wipes the VM. nothing was ever written to your disk.",
@@ -1136,6 +1139,12 @@ function guiApiImpl() {
   };
 }
 window.__cleanroomGui = guiApiImpl();
+// small debug hook for verification scripts: call the mounted WSGI app directly
+window.__crWsgiTest = async (payload) => {
+  if (!pyodide) throw new Error("no VM");
+  return JSON.parse(await pyodide.runPythonAsync(
+    "__cr_wsgi_entry(" + JSON.stringify(JSON.stringify(payload)) + ")"));
+};
 
 /* static web preview: inline every repo-local script/stylesheet into the
    entry HTML, then load it in an origin-less sandboxed iframe. No fetches
@@ -1303,8 +1312,248 @@ function listRepoFiles() {
   return out.sort();
 }
 
-const RUNNABLE = /\.(py|json|jsonl|txt|csv|toml|cfg|ini|md)$/i;
+// written into the VM's filesystem — includes web assets so WSGI apps can
+// serve their own templates and static folders through the virtual network
+const RUNNABLE = /\.(py|json|jsonl|txt|csv|toml|cfg|ini|md|html|css|js|mjs|svg|yml|yaml|xml)$/i;
 const ENTRIES = ["main.py", "app.py", "demo.py", "run.py", "cli.py", "__main__.py"];
+
+/* ---------- setup & run: the README/manifest understanding ---------- */
+
+const PIP_RE = /^(flask|django|fastapi|jinja2|werkzeug|click|itsdangerous|markupsafe|rich|pydantic|httpx?|pillow|numpy|pandas|matplotlib|requests|beautifulsoup4|lxml|pyyaml|python-dotenv|attrs|certifi|chardet|charset-normalizer|idna|packaging|six|typing-extensions|sniffio|anyio|starlette|uvicorn|multidict|yarl|aiosignal|frozenlist|uvloop|watchfiles|websockets|python-multipart|pyjwt|cryptography|sqlparse|django-debug-toolbar)$/i;
+
+function micropipProxy() { return pyodide.pyimport("micropip"); }
+
+async function runSetup(setup) {
+  line("── setting up (" + setup.installs.length + " requirement" +
+       (setup.installs.length === 1 ? "" : "s") + ") — installing into the VM ──", "t-meta");
+  let okCount = 0, failCount = 0;
+  const failed = [];
+  for (const name of setup.installs) {
+    let how = null;
+    try {
+      await pyodide.loadPackage(name);
+      how = "the VM's catalog";
+    } catch (e1) { /* not in the catalog — try PyPI wheels */ }
+    if (!how) {
+      try {
+        await pyodide.loadPackage("micropip");
+        await pyodide.runPythonAsync(
+          "import micropip; await micropip.install(" + JSON.stringify(name) + ")");
+        how = "pure-Python wheels from PyPI (via your browser's own fetch)";
+      } catch (e2) {
+        const parts = String(e2.message || e2).split("\n").filter(Boolean);
+        line("      (" + name + ": " + parts.slice(-3).join(" | ") + ")", "t-dim");
+      }
+    }
+    if (how) {
+      line("  ✓ " + name + " — installed from " + how, "t-out");
+      okCount++;
+    } else {
+      line("  ✗ " + name + " — unavailable: it needs compiled binaries, and a "
+           + "browser tab has no compiler. The VM can only load catalog packages "
+           + "and pure-Python wheels. This one can't run in-tab (this-PC mode can).", "t-err");
+      failed.push(name); failCount++;
+    }
+  }
+  line("setup: " + okCount + " installed" + (failCount ? " · " + failCount +
+       " unavailable" + (failCount ? " — " + failed.join(", ") : "") : ""), "t-meta");
+  return failCount === 0;
+}
+
+/* ---------- WSGI-in-tab: a server app whose only network is this page ------
+   The VM has no sockets — by design. So the WSGI app never listens: the app
+   screen's iframe asks, the VM answers. Requests travel browser → postMessage
+   → the WSGI callable → browser. Nothing listens on the machine, nothing
+   escapes the tab. Wipe ends it. */
+
+const WSGI_PY_BOOT = (mod) => `
+import importlib as _imp
+_m = _imp.import_module(${JSON.stringify(mod)})
+_a = getattr(_m, "app", None) or getattr(_m, "application", None)
+if _a is None or not hasattr(_a, "wsgi_app"):
+    raise RuntimeError("no WSGI app object (Flask/Django 'app') found in module " + ${JSON.stringify(mod)})
+__cr_wsgi_app = _a.wsgi_app
+
+def __cr_wsgi_entry(payload):
+    import io, json as _json, base64 as _b64, sys as _sys
+    d = _json.loads(payload)
+    body = _b64.b64decode(d.get("bodyB64", ""))
+    environ = {
+        "REQUEST_METHOD": d["method"], "PATH_INFO": d["path"],
+        "QUERY_STRING": d.get("query", ""), "SERVER_NAME": "cleanroom.local",
+        "SERVER_PORT": "80", "SERVER_PROTOCOL": "HTTP/1.1",
+        "wsgi.version": (1, 0), "wsgi.url_scheme": "http",
+        "wsgi.input": io.BytesIO(body), "wsgi.errors": _sys.stderr,
+        "wsgi.multithread": False, "wsgi.multiprocess": False,
+        "wsgi.run_once": False, "CONTENT_LENGTH": str(len(body)),
+    }
+    for k, v in (d.get("headers") or {}).items():
+        ku = k.upper().replace("-", "_")
+        # WSGI passes Content-Type/Content-Length unprefixed, everything else
+        # as HTTP_*
+        if ku in ("CONTENT_TYPE", "CONTENT_LENGTH"):
+            environ[ku] = str(v)
+        else:
+            environ["HTTP_" + ku] = str(v)
+    state = {}
+    def _sr(status, hdrs, exc_info=None):
+        state["status"] = status
+        state["headers"] = [[str(a), str(b)] for a, b in hdrs]
+    chunks = __cr_wsgi_app(environ, _sr)
+    data = b"".join(bytes(c) for c in chunks)
+    if hasattr(chunks, "close"):
+        chunks.close()
+    code = int(state["status"].split(" ", 1)[0])
+    return _json.dumps({"code": code, "headers": state["headers"],
+                        "bodyB64": _b64.b64encode(data).decode()})
+`;
+
+const WSGI_SHIM_BODY = `
+var __cr = (window.__cr = window.__cr || { pending: {} });
+function __crCall(payload) {
+  return new Promise(function (res) {
+    var id = "r" + Math.random().toString(36).slice(2);
+    __cr.pending[id] = res;
+    parent.postMessage({ crWsgi: "request", id: id, payload: payload }, "*");
+  });
+}
+window.addEventListener("message", function (ev) {
+  var d = ev.data || {};
+  if (d.crWsgi === "response" && __cr.pending[d.id]) {
+    var f = __cr.pending[d.id];
+    delete __cr.pending[d.id];
+    f(d.resp);
+  }
+});
+function __crBody(r) {
+  return Uint8Array.from(atob(r.bodyB64), function (c) { return c.charCodeAt(0); });
+}
+function __crLoc(r) {
+  if (r.code >= 300 && r.code < 400 && r.headers) {
+    for (var i = 0; i < r.headers.length; i++) {
+      if (String(r.headers[i][0]).toLowerCase() === "location") return r.headers[i][1];
+    }
+  }
+  return null;
+}
+function __crWrite(r) {
+  var html = new TextDecoder().decode(__crBody(r));
+  var shim = "<scr" + "ipt>var __crSrc=" + JSON.stringify(__crSrc) + ";" + __crSrc + ";</scr" + "ipt>";
+  document.open();
+  if (/<head[^>]*>/i.test(html)) document.write(html.replace(/<head[^>]*>/i, "<head>" + shim));
+  else document.write(shim + html);
+  document.close();
+}
+function __crNav(path) {
+  return __crCall({ method: "GET", path: path, query: "", body: "", headers: {} }).then(function (r) {
+    var loc = __crLoc(r);
+    if (loc) return __crNav(loc);
+    __crWrite(r);
+  });
+}
+function __crFollow(r) {
+  var loc = __crLoc(r);
+  if (loc) return __crNav(loc);
+  __crWrite(r);
+}
+var __of = window.fetch;
+window.fetch = function (input, init) {
+  var url = typeof input === "string" ? input : (input && input.url) || "";
+  if (/^(https?:)?\\/\\//i.test(url) || String(url).indexOf("data:") === 0) {
+    return __of ? __of.apply(window, arguments) : Promise.reject(new Error("no network"));
+  }
+  init = init || {};
+  var headers = {};
+  if (init.headers && init.headers.forEach) init.headers.forEach(function (v, k) { headers[k] = v; });
+  else if (init.headers) for (var k in init.headers) headers[k] = init.headers[k];
+  return __crCall({ method: (init.method || "GET").toUpperCase(), path: url, query: "",
+                    body: init.body == null ? "" : String(init.body), headers: headers })
+    .then(function (r) { return new Response(__crBody(r), { status: r.code, headers: r.headers || [] }); });
+};
+document.addEventListener("submit", function (ev) {
+  var f = ev.target;
+  var action = f.getAttribute("action") || "/";
+  var m = (f.method || "get").toLowerCase();
+  ev.preventDefault();
+  if (m === "post") {
+    var body = new URLSearchParams(new FormData(f)).toString();
+    __crCall({ method: "POST", path: action, query: "", body: body,
+               headers: { "Content-Type": "application/x-www-form-urlencoded" } })
+      .then(__crFollow);
+  } else {
+    __crNav(action + "?" + new URLSearchParams(new FormData(f)).toString());
+  }
+}, true);
+document.addEventListener("click", function (ev) {
+  var a = ev.target.closest && ev.target.closest("a[href]");
+  var href = a && a.getAttribute("href");
+  if (a && href && !/^(https?:|data:|#|mailto:)/i.test(href)) {
+    ev.preventDefault();
+    __crNav(href);
+  }
+}, true);
+function crBoot(startPath) {
+  __crNav(startPath || "/");
+}
+`;
+
+function wsgiShellHtml() {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>app — virtual network</title>'
+    + '<style>body{font:14px system-ui,sans-serif;background:#fff;margin:0;padding:20px;color:#333}'
+    + '.hint{color:#999;font-size:12px;margin:0 0 10px}</style></head><body>'
+    + '<p class="hint">this app runs in the VM of this tab; this page is its only network — nothing listens on any machine</p>'
+    + '<div id="app">loading the app from the VM…</div>'
+    + '<script>var __crSrc=' + JSON.stringify(WSGI_SHIM_BODY) + ';'
+    + WSGI_SHIM_BODY + ';crBoot("/");<\/script></body></html>';
+}
+
+window.addEventListener("message", async ev => {
+  const d = ev.data || {};
+  if (d.crWsgi !== "request") return;
+  if (!pyodide || mode !== "vm") return;
+  try {
+    const payload = {
+      method: d.payload.method,
+      path: d.payload.path,
+      query: d.payload.query || "",
+      bodyB64: btoa(unescape(encodeURIComponent(d.payload.body || ""))),
+      headers: d.payload.headers || {},
+    };
+    const resp = await pyodide.runPythonAsync(
+      "__cr_wsgi_entry(" + JSON.stringify(JSON.stringify(payload)) + ")");
+    ev.source.postMessage({ crWsgi: "response", id: d.id, resp: JSON.parse(resp) }, "*");
+  } catch (e) {
+    line("virtual network error: " + (e.message || e), "t-err");
+    try {
+      ev.source.postMessage({ crWsgi: "response", id: d.id,
+        resp: { code: 500, headers: [["Content-Type", "text/plain"]],
+                bodyB64: btoa("the VM returned an error: " + (e.message || e)) } }, "*");
+    } catch (e2) { /* frame gone */ }
+  }
+});
+
+async function vmServeWSGI() {
+  const mod = ["app", "main", "wsgi", "server", "run"].find(
+    m => vmFiles.some(f => f[0] === m + ".py"));
+  if (!mod) {
+    line("no obvious WSGI module (app.py / main.py / wsgi.py) to mount", "t-err");
+    return;
+  }
+  line("── mounting the WSGI app inside the VM — its only network is this page ──", "t-meta");
+  try {
+    await pyodide.runPythonAsync(WSGI_PY_BOOT(mod));
+  } catch (e) {
+    line("could not mount the WSGI app: " + (e.message || e).split("\n")[0], "t-err");
+    return;
+  }
+  webFrame.removeAttribute("src");
+  webFrame.srcdoc = wsgiShellHtml();
+  webWrap.classList.remove("hidden");
+  appCard.classList.remove("hidden");
+  appTitle.textContent = "app screen — " + mod + " (WSGI in the VM · virtual network)";
+  line("the app is served by the page: browser → VM → browser. no sockets, "
+       + "nothing listens on your machine, nothing escapes the tab. wipe ends it.", "t-dim");
+}
 
 function suggestCommands(files) {
   const paths = files.map(f => f[0]);
@@ -1382,6 +1631,22 @@ async function vmLoadRepo(raw) {
   }
   renderRunCards(cards);
   renderFilePills(files.map(f => f[0]));
+  const setup = parseSetup(new Map(files));
+  if (setup.installs.length) {
+    line("setup understood from the manifests: pip " + setup.installs.join(", "), "t-dim");
+    cards.push({ label: "set up & run — install " + setup.installs.length +
+                       " package" + (setup.installs.length === 1 ? "" : "s") + " in the VM",
+                 cmd: "setup", kind: "run" });
+  }
+  if (setup.appKind === "wsgi") {
+    cards.push({ label: "serve the web app in-tab (virtual network)", cmd: "serve", kind: "run" });
+    line("server app detected (Flask/Django) — in the tab it runs behind a virtual "
+         + "network: the page asks, the VM answers, nothing listens anywhere.", "t-dim");
+  } else if (setup.appKind === "asgi") {
+    line("FastAPI is ASGI — the in-tab transport serves WSGI apps; this one would "
+         + "need uvicorn, which cannot bind in a tab. honest miss for now.", "t-dim");
+  }
+  renderRunCards(cards);
   if (!files.some(([p]) => /\.py$/i.test(p))) {
     line("this repo has no Python files — the in-tab VM runs Python only, so there is nothing to execute here. the triage report above still applies.", "t-dim");
   }
@@ -1615,6 +1880,13 @@ async function execLine(raw) {
   if (cmd === "help" || cmd === "?") { HELP.forEach(l => line(l, "t-dim")); return; }
   if (cmd === "wipe") { await wipeVM(); return; }
   if (cmd === "preview") { vmPreview(); return; }
+  if (cmd === "setup") {
+    const okAll = await runSetup(parseSetup(new Map(vmFiles)));
+    const st = parseSetup(new Map(vmFiles));
+    if (okAll && st.appKind === "wsgi") await vmServeWSGI();
+    return;
+  }
+  if (cmd === "serve") { await vmServeWSGI(); return; }
   if (cmd === "screen") {
     if (W.size) { appCard.classList.remove("hidden"); }
     else line("no window yet — run the repo's GUI entry (e.g. 'run gui_notes.py')", "t-dim");
@@ -1669,6 +1941,12 @@ async function runPython(source, label) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (label === "<repl>") {
+          if (/\bawait\b/.test(source)) {
+            // top-level await needs runPythonAsync's compiler (single-mode
+            // compile() would reject it); echo semantics don't apply here
+            await pyodide.runPythonAsync(source);
+            return;
+          }
           // compile mode "single" = real REPL semantics: runs statements AND
           // echoes the value of every expression statement, like python's shell
           const lit = JSON.stringify(source);
