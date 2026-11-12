@@ -248,7 +248,7 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-37 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+38 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
 the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
 and wipes — no mocks. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
 JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations and the shelf's shape.
