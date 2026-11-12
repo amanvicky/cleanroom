@@ -225,6 +225,42 @@ export function parseSetup(files) {
   return out;
 }
 
+/* When the in-tab VM cannot carry a repo, name the reasons and hand off to a
+   full machine the browser can host: GitHub Codespaces (the operator's own
+   account, free tier, full Linux + port forwarding in the browser).
+   Node-testable (runner-check.mjs). */
+const NATIVE_ONLY = new Set([
+  "torch", "tensorflow", "onnxruntime", "ctranslate2", "faster-whisper",
+  "av", "sounddevice", "soundfile", "pyaudio", "opencv-python", "cv2",
+  "pyannote", "pyannote.audio", "transformers", "accelerate", "bitsandbytes",
+  "playwright", "weasyprint", "cairosvg", "mysqlclient", "psycopg2",
+  "psycopg2-binary", "pymupdf", "fitz", "ddddocr", "paddleocr", "paddlepaddle",
+]);
+
+export function fullMachineReasons(setup, sig, hasPythonRunnable) {
+  const reasons = [];
+  if (setup.appKind === "asgi") {
+    reasons.push("ASGI server app — uvicorn would need to bind a socket, which a tab has");
+  }
+  const native = setup.installs.filter(n => NATIVE_ONLY.has(n));
+  if (native.length) {
+    reasons.push("native-binary dependencies that cannot exist in WebAssembly: " + native.join(", "));
+  }
+  if (!hasPythonRunnable) {
+    reasons.push("no runnable Python — the in-tab VM is CPython only");
+  }
+  if (sig && sig.tkinter) {
+    // tkinter itself IS runnable here (virtual tkinter); not a reason
+  }
+  return reasons;
+}
+
+export function codespacesUrl(repoUrl) {
+  const m = /github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/.exec(repoUrl || "");
+  if (!m) return null;
+  return "https://codespaces.new/" + m[1] + "/" + m[2] + "?quickstart=1";
+}
+
 /* Pull localhost ports a server prints while starting up, in output order.
    Matches the shapes real servers actually print:
      "Serving HTTP on 127.0.0.1 port 8000 (http://127.0.0.1:8000/)"

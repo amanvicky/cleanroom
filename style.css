@@ -524,3 +524,6 @@ footer a:hover { color: var(--accent); }
   color: var(--text); font-size: 12.5px; line-height: 1.5;
   font-family: "Cascadia Mono", Consolas, monospace; white-space: pre;
 }
+.runcard.full {
+  background: #0d1a2b; color: #7ec8e8; border-color: #1d3d5c;
+}

@@ -13,7 +13,8 @@
        local bridge and the app's own UI opens at 127.0.0.1:<port> in-frame */
 
 import { fetchRepoFiles } from "./repo_fetch.js";
-import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup } from "./runner_core.js";
+import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup,
+         fullMachineReasons, codespacesUrl } from "./runner_core.js";
 import { scanTree } from "./cleanroom.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
@@ -226,6 +227,18 @@ function renderRunCards(items) {
   runRow.replaceChildren();
   if (!items.length) { runRow.classList.add("hidden"); return; }
   for (const it of items) {
+    if (it.kind === "link") {
+      const a = document.createElement("a");
+      a.className = "runcard full";
+      a.href = it.href;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.innerHTML = "▶ <b></b>";
+      a.querySelector("b").textContent = it.label;
+      a.title = it.title || it.href;
+      runRow.appendChild(a);
+      continue;
+    }
     const b = document.createElement("button");
     b.className = "runcard" + (it.kind === "approve" ? " danger" : "");
     b.innerHTML = "▶ <b></b>";
@@ -1645,6 +1658,26 @@ async function vmLoadRepo(raw) {
   } else if (setup.appKind === "asgi") {
     line("FastAPI is ASGI — the in-tab transport serves WSGI apps; this one would "
          + "need uvicorn, which cannot bind in a tab. honest miss for now.", "t-dim");
+  }
+  // beyond the tab: name the reasons, hand off to a full machine in the browser
+  const hasRunnablePy = files.some(([p]) => /\.py$/i.test(p));
+  const fm = fullMachineReasons(setup, sig, hasRunnablePy);
+  if (fm.length) {
+    const csUrl = codespacesUrl(liveUrl.value || raw);
+    for (const r of fm) line("beyond the tab: " + r, "t-dim");
+    if (rep.verdict === "dangerous" || rep.verdict === "high-risk") {
+      line("the full machine has NO cleanroom seatbelt: no env scrub, no network "
+           + "guard, no wipe. the triage report above is your pre-flight check — "
+           + "read the findings before you open it.", "t-err");
+    }
+    if (csUrl) {
+      cards.push({ kind: "link", href: csUrl,
+                   label: "open a full machine — GitHub Codespaces (in your browser)",
+                   title: csUrl });
+      line("the browser CAN host a full Linux machine for this repo: GitHub "
+           + "Codespaces — your GitHub account, free tier, the app's port forwarded "
+           + "to you. pip install works there for everything native.", "t-dim");
+    }
   }
   renderRunCards(cards);
   if (!files.some(([p]) => /\.py$/i.test(p))) {

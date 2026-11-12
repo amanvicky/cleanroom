@@ -3,7 +3,8 @@
    and the curated shelf. These are convenience guidance, not the security
    engine — the security engine has its own parity gate. */
 
-import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup } from "./runner_core.js";
+import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps, parseSetup,
+         fullMachineReasons, codespacesUrl } from "./runner_core.js";
 import { TEXT_RULES } from "./cleanroom.js";
 
 let failed = 0;
@@ -141,6 +142,27 @@ ok(setup2.installs.join(",") === "rich,click,numpy",
 ok(setup2.appKind === "cli", "parseSetup: plain repo stays cli");
 const setup3 = parseSetup(new Map([["manage.py", ""], ["README.md", "a django blog"]]));
 ok(setup3.appKind === "wsgi" && !setup3.installs.length, "parseSetup: django via manage.py, no installs");
+
+/* fullMachineReasons: names exactly why the tab can't carry a repo, plus the
+   Codespaces hand-off URL — the honest tier for repos beyond the tab */
+const fmSetup = parseSetup(new Map([
+  ["requirements.txt", "fastapi\nuvicorn\nfaster-whisper\nav\nsounddevice\nnumpy\n"],
+]));
+const fmReasons = fullMachineReasons(fmSetup, null, true);
+ok(fmReasons.length === 2 &&
+   fmReasons[0].startsWith("ASGI server app") &&
+   fmReasons[1].startsWith("native-binary dependencies"),
+   "fullMachineReasons: ASGI + native deps named (got: " + fmReasons.join(" / ") + ")");
+ok(fmReasons[1].includes("faster-whisper") && fmReasons[1].includes("sounddevice"),
+   "fullMachineReasons lists the native packages by name");
+const fmNone = fullMachineReasons(parseSetup(new Map([["requirements.txt", "flask\n"]])), null, true);
+ok(fmNone.length === 0, "fullMachineReasons: a WSGI repo with pure deps stays in-tab");
+const fmNoPy = fullMachineReasons(parseSetup(new Map([["package.json", "{}"]])), null, false);
+ok(fmNoPy.some(r => r.startsWith("no runnable Python")), "fullMachineReasons: non-Python repo named");
+ok(codespacesUrl("https://github.com/nahcmon/STT-with-Summarization-Fully-Local") ===
+   "https://codespaces.new/nahcmon/STT-with-Summarization-Fully-Local?quickstart=1",
+   "codespacesUrl: quick-create deep link");
+ok(codespacesUrl("not a repo") === null, "codespacesUrl: null for junk input");
 
 console.log(failed ? "runner-check: FAILED" : "runner-check: all good");
 process.exitCode = failed ? 1 : 0;

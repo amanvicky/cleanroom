@@ -97,6 +97,19 @@ uvicorn, which cannot bind in a tab), database-backed apps are limited by what t
 and dev hot-reload doesn't flow through it. The CLI and this-PC mode remain the full-fidelity
 paths.
 
+## Beyond the tab: a full machine, hosted in your browser
+
+Some repos the tab cannot carry — an ASGI server needing a bound socket, native-binary
+dependencies (torch, faster-whisper, PortAudio…), or a repo with no Python at all. The runner
+names the exact reasons on load, then offers the honest hand-off: **GitHub Codespaces** — a full
+Linux machine hosted by GitHub, opened from your browser with your own account (free tier:
+120 core-hours/month). The app installs there for real — Linux x86 wheels exist for the native
+packages — and its port is forwarded for you to use in the browser.
+
+Cleanroom's job does not stop at the link: the triage report is your pre-flight check. On a full
+machine there is **no cleanroom seatbelt** — no scrubbed environment, no network guard, no
+verified wipe — so the report card's findings are the safety review you do before you open one.
+
 ## The app screen: GUI apps run and can be used right there
 
 A REPL is for reading output. Many repos are **apps** — and the runner opens an **app screen**
