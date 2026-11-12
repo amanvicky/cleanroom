@@ -284,3 +284,15 @@ def test_web_start_needs_approval_for_dangerous(server):
     s, res = _post(base, "/api/web", {"cmd": "echo nope"}, b.token)
     assert s == 409 and res["needs_approval"] is True
     _post(base, "/api/wipe", {}, b.token)
+
+
+def test_private_network_access_header_present(server):
+    """The live HTTPS page is a public origin calling this private server;
+    Chrome's Private Network Access blocks the request unless the bridge
+    answers with this header. The token remains the control boundary."""
+    b, base = server
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(base + "/api/status?token=" + b.token)
+    with opener.open(req, timeout=10) as r:
+        assert r.headers.get("Access-Control-Allow-Private-Network") == "true"
+        assert r.headers.get("Access-Control-Allow-Origin") == "*"

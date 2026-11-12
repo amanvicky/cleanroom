@@ -25,7 +25,7 @@ import sandbox
 import stages as stages_mod
 import triage
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 # the read-only file viewer's per-file cap (bytes); bigger files report
 # their size instead of their contents
@@ -369,6 +369,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Cleanroom-Token")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        # the live page is a public HTTPS origin calling this PRIVATE server —
+        # Chrome's Private Network Access demands this header on the preflight.
+        # Every state-changing route is token-gated, so the header grants
+        # probing access only, never control.
+        self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def do_OPTIONS(self):
         self.send_response(204)

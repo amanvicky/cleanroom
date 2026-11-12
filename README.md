@@ -143,12 +143,16 @@ python cleanroom.py serve          # binds 127.0.0.1 only, prints a one-time tok
 ```
 
 Open [amanvicky.github.io/cleanroom](https://amanvicky.github.io/cleanroom/), switch to
-**“this PC”**, paste the token. The page shows your real specs (cores, RAM, Python) and from then
+**“this PC”**, paste the token. On newer Chrome the browser asks your permission first — "allow
+this site to access your local network?" — that's Chrome's Local Network Access check, and
+allowing it is correct: the token remains the control boundary (the bridge answers probing
+requests with nothing). The page shows your real specs (cores, RAM, Python) and from then
 on repos you run there execute as real processes on your machine — with the full guardrail set:
 whitelist environment, network guard, timeout, and a wipe that re-verifies zero residue. A repo
 that triages DANGEROUS must be explicitly approved before it runs. Server-shaped repos get a
 **Start app** row: the app runs as a real process, the page picks up the port it prints, and the
-app's own UI opens in the app screen:
+app's own UI opens in the app screen (streamed through the bridge's embed-header proxy when the
+tab is multi-core isolated):
 
 ![this-PC mode: the app's real UI served by the machine, used inside the page](docs/cleanroom-pc-web.png)
 
