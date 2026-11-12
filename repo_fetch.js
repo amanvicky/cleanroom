@@ -10,6 +10,7 @@ export const TEXT_EXT = new Set([
   "py", "js", "mjs", "cjs", "ts", "jsx", "tsx", "json", "sh", "bash",
   "yml", "yaml", "toml", "cfg", "ini", "env", "txt", "md", "rst",
   "rb", "go", "rs", "php", "pl", "ps1", "bat", "html", "xml", "csv", "css",
+  "jsonl",
 ]);
 
 export function parseRepo(raw) {

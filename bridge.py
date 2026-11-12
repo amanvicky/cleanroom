@@ -23,7 +23,11 @@ import sandbox
 import stages as stages_mod
 import triage
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
+
+# the read-only file viewer's per-file cap (bytes); bigger files report
+# their size instead of their contents
+FILE_VIEW_MAX_BYTES = 256 * 1024
 
 # a file that imports tkinter means the repo has a Python GUI — on a real PC
 # it opens a real window on the operator's desktop
@@ -187,6 +191,35 @@ class Bridge:
             return {"ok": False, "error": "no session"}
         s.approved = True
         return {"ok": True, "approved": True}
+
+    def api_file(self, path):
+        """Read one file from the sandbox clone for the page's read-only
+        viewer: strictly relative, traversal-guarded, size-capped, and it
+        never executes anything."""
+        s = self.session
+        if not s or s.closed:
+            return {"ok": False, "error": "no open session"}
+        rel = (path or "").strip().replace("\\", "/")
+        if not rel or rel.startswith("/") or any(seg in ("", ".", "..") for seg in rel.split("/")):
+            return {"ok": False, "error": "bad path"}
+        root = os.path.realpath(os.path.join(s.dir, "repo"))
+        full = os.path.realpath(os.path.join(root, rel))
+        if full != root and not full.startswith(root + os.sep):
+            return {"ok": False, "error": "bad path"}
+        if os.path.isdir(full):
+            return {"ok": False, "error": "not a file: " + rel}
+        if not os.path.isfile(full):
+            return {"ok": False, "error": "no such file: " + rel}
+        size = os.path.getsize(full)
+        if size > FILE_VIEW_MAX_BYTES:
+            return {"ok": True, "path": rel, "too_big": True, "size": size}
+        with open(full, "rb") as fh:
+            data = fh.read()
+        try:
+            text, binary = data.decode("utf-8"), False
+        except UnicodeDecodeError:
+            text, binary = None, True
+        return {"ok": True, "path": rel, "text": text, "binary": binary, "size": size}
 
     def api_web(self, cmd, net=None):
         """Run the repo as a real web app: a long-lived process with NO command
@@ -376,6 +409,12 @@ class _Handler(BaseHTTPRequestHandler):
             res = self.bridge.api_run(cmd=cmd, py=py)
             if res.get("ok"):
                 self._log("run    %s" % (cmd or "(python) " + py)[:90])
+            return self._reply(res, 200 if res.get("ok") else 409)
+
+        if u.path == "/api/file":
+            res = self.bridge.api_file(body.get("path") or "")
+            if res.get("ok"):
+                self._log("file   %s" % res.get("path", "")[:80])
             return self._reply(res, 200 if res.get("ok") else 409)
 
         if u.path == "/api/web":

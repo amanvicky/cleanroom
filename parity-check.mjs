@@ -51,7 +51,7 @@ const ruleRows = TEXT_RULES.map(([rid, sev, cat, pat, flags, exts]) => ({
 }));
 
 check("POPULAR package list", py.popular, POPULAR);
-check("rule table (21 rules)", py.rules, ruleRows);
+check(`rule table (${TEXT_RULES.length} rules)`, py.rules, ruleRows);
 check("severity weights", py.weights, WEIGHTS);
 check("verdict steps", py.verdict_steps, VERDICT_STEPS);
 

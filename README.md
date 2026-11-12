@@ -35,6 +35,16 @@ head 0 attention weights (rows = attending position, cols = attended):
 - **`wipe`** erases the files, variables and modules. **Closing the tab** erases everything else.
   Nothing was ever written to your disk — there is no disk access to begin with.
 
+A repo that loads never just drops you at a blind prompt. The run tab shows the **report card** —
+score, verdict, every finding with `file:line` and a one-line explanation of what the rule means —
+before anything runs. **Run-it cards** offer the detected entry points as one click (run the
+tkinter app, preview the web app, serve the repo in this-PC mode), and the **file browser** lists
+every repo file — click one to read it, strictly read-only, nothing executes. Above the box sits a
+curated **shelf** of repos verified to run in the VM: each entry states what you'll see and names
+the commit it was verified at.
+
+![Run tab: the shelf, the report card with explained findings, run cards](docs/cleanroom-runreport.png)
+
 Because the VM is a browser tab, "runs virtually without disturbing anything" is structural, not
 promised: the repo never sees your files, your environment variables, or your network.
 
@@ -211,10 +221,10 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-35 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+36 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
 the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
 and wipes — no mocks. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
-JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers.
+JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations and the shelf's shape.
 
 ```bash
 python -m pytest tests/ -q

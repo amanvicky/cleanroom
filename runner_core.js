@@ -57,7 +57,7 @@ export function detectGuiSignals(files) {
   }
   if (sig.webapp && !sig.hints.length) {
     sig.hints.push({ label: "serve the static files",
-                     cmd: "python -m http.server 8000 --bind 127.0.0.1", net: false });
+                     cmd: "python -m http.server 0 --bind 127.0.0.1", net: false });
   }
   return sig;
 }
@@ -71,6 +71,83 @@ function safeJson(s) {
   if (!s) return null;
   try { return JSON.parse(s.replace(/^\uFEFF/, "")); } catch (e) { return null; }
 }
+
+/* One-line explanation for every rule the triage engine can emit, shown in
+   the run-tab report card. Presentation only — not part of the security
+   engine. runner-check.mjs asserts this map covers exactly the rule ids the
+   engine produces (TEXT_RULES + ENV_READS + the three package-level rules). */
+export const RULE_WHAT = {
+  PRIVATE_KEY: "an embedded private key — anyone holding this file owns whatever it opens",
+  AWS_KEY: "an AWS access key id — pairs with a secret key; treat as leaked",
+  GH_TOKEN: "a GitHub token — can read or write repos under its scopes",
+  GOOGLE_KEY: "a Google API key — usable against the matching cloud project",
+  SLACK_TOKEN: "a Slack token — can read or post in its workspace scopes",
+  STRIPE_KEY: "a live Stripe secret key — can move money",
+  HARDCODED_SECRET: "a credential-shaped assignment (password/secret/key/token = \"…\")",
+  DYNAMIC_EXEC_PY: "eval/exec/compile — strings become code; payloads hide behind them",
+  DYNAMIC_EXEC_JS: "eval or new Function — strings become code; payloads hide behind them",
+  PICKLE_LOAD: "pickle/marshal load — deserializing runs embedded code",
+  IMPORT_EXEC: "__import__ — imports computed at runtime, invisible to a static read",
+  SHELL_EXEC_PY: "spawns shell processes — arbitrary commands at its fingertips",
+  SHELL_EXEC_JS: "child_process — arbitrary commands at its fingertips",
+  PIPED_INSTALL: "curl … | sh — downloads and executes code straight from the network",
+  DESTRUCTIVE_FS: "deletes files or directories — check what it points at",
+  HOME_WRITE: "touches your home directory or /etc — outside any project directory",
+  PERSISTENCE: "shell profiles or schedulers — survives even a verified wipe",
+  ENV_ACCESS: "reads environment variables — where your secrets live",
+  ENV_READS: "reads this named environment variable",
+  NET_PY: "makes network calls from Python",
+  NET_JS: "makes network calls from JavaScript",
+  LONG_B64: "a long base64 blob — classic obfuscation",
+  HEX_BLOB: "a long hex blob — classic obfuscation",
+  TYPOSQUAT_HINT: "a dependency name closely mimics a popular package — check the spelling on the registry",
+  INSTALL_HOOK: "npm pre/postinstall — code runs at install time, before anyone reviews it",
+  SETUP_HOOK: "setup.py overrides build/install steps — read them first",
+};
+
+/* Per-rule and per-category advice shown under a report ("before you run
+   this"). Moved here from app.js so both tabs and runner-check share it. */
+const RULE_ADVICE = [
+  ["INSTALL_HOOK", "this repo runs code at INSTALL time (npm pre/postinstall) — that executes before anyone reviews it"],
+  ["SETUP_HOOK", "setup.py overrides build/install steps — read them first"],
+];
+const CAT_ADVICE = [
+  ["secrets", "credential-shaped strings are present — assume any key you can see, attackers can see too"],
+  ["typosquat", "a dependency name closely mimics a popular package — verify the spelling on the registry page"],
+  ["persistence", "code touches shell profiles / schedulers — that survives your session even if the sandbox is wiped"],
+  ["exec", "dynamic execution (eval/exec/pickle) — obfuscated payloads hide behind these calls"],
+  ["network", "it phones home — if you run it, run it with outbound network blocked"],
+];
+
+/* The "before you run this" steps for a scanTree report. */
+export function beforeRunSteps(rep) {
+  const rules = new Set(rep.findings.map(f => f.rule));
+  const cats = new Set(Object.keys(rep.by_category || {}));
+  const steps = [];
+  for (const [rule, text] of RULE_ADVICE) if (rules.has(rule)) steps.push(text);
+  for (const [cat, text] of CAT_ADVICE) if (cats.has(cat)) steps.push(text);
+  if (!steps.length) steps.push("no red flags in static triage — treat \u201cclean\u201d as \u201cnothing obvious\u201d, not \u201csafe\u201d");
+  return steps;
+}
+
+/* The curated shelf on the run tab: repos verified to run in the in-tab VM,
+   each saying what you will see. `at` is the commit each entry was last
+   verified against (spot-checked again whenever the shelf changes).
+   runner-check.mjs validates the shape. */
+export const SHELF = [
+  { repo: "https://github.com/amanvicky/spamcheck",
+    what: "train the naive-Bayes classifier, then classify a message live", at: "8f3cc12" },
+  { repo: "https://github.com/amanvicky/attention-from-scratch",
+    what: "self-attention in ~90 lines of NumPy — print the attention weights", at: "9ce42fb" },
+  { repo: "https://github.com/amanvicky/tokenizer-playground",
+    what: "the byte-BPE trainer's Python side — tokens, merges, encode/decode", at: "af34d94" },
+  { repo: "https://github.com/amanvicky/tk-gui-demo",
+    what: "a tkinter notes app opens as a real window on the app screen", at: "82841f5" },
+  { repo: "https://github.com/amanvicky/csv-clinic",
+    what: "diagnose a messy CSV from examples/ — types, nulls, duplicates", at: "0f62878" },
+  { repo: "https://github.com/amanvicky/fine-tune-prep",
+    what: "inspect and validate a chat JSONL dataset before fine-tuning", at: "7dc4090" },
+];
 
 /* Pull localhost ports a server prints while starting up, in output order.
    Matches the shapes real servers actually print:

@@ -45,15 +45,32 @@
         <button id="loadBtn">Run it</button>
       </div>
       <div class="presets">
-        <span>try one — these run for real:</span>
-        <button data-live-preset="https://github.com/amanvicky/spamcheck">spam classifier</button>
-        <button data-live-preset="https://github.com/amanvicky/attention-from-scratch">attention from scratch (numpy)</button>
-        <button data-live-preset="https://github.com/amanvicky/tokenizer-playground">byte-BPE tokenizer</button>
-        <button data-live-preset="https://github.com/amanvicky/tk-gui-demo">GUI demo (tkinter + web app)</button>
+        <span>the shelf — every entry runs for real in this tab, and says what you'll see:</span>
+        <div class="shelf" id="shelfRow"></div>
       </div>
       <div class="status" id="liveStatus"></div>
 
+      <div class="card hidden tri" id="triCard">
+        <div class="tri-head">
+          <div class="score"><span id="triScore">–</span><small>/100</small></div>
+          <div class="verdict-word" id="triVerdict">–</div>
+          <div class="meta" id="triMeta"></div>
+          <button id="triToggle" class="linkbtn">findings ▾</button>
+        </div>
+        <div class="hidden" id="triBody">
+          <div class="cat-row" id="triCats"></div>
+          <h3>findings</h3>
+          <div class="findings" id="triFindings"></div>
+          <h3>environment variables it reads</h3>
+          <div class="cat-row" id="triEnv"></div>
+          <h3>before you run this</h3>
+          <ul class="checklist" id="triCheck"></ul>
+          <p class="note">A clean report means “nothing obvious” — not “safe”. The fuller report lives in the safety-check tab.</p>
+        </div>
+      </div>
+
       <div class="card hidden" id="liveCard">
+        <div class="runcards hidden" id="runRow"></div>
         <div class="term" id="term"></div>
         <div class="prompt-row">
           <span class="prompt-label">repo&gt;</span>
@@ -91,6 +108,21 @@
         <p class="note" id="appNote">GUI apps run on the app screen: tkinter apps render as real HTML
         widgets (a subset — skipped extras are counted), web previews run in a frame with no origin
         and no storage. In this-PC mode the app is a real process serving a real port on your machine.</p>
+      </div>
+
+      <div class="card hidden" id="filesCard">
+        <div class="fileshead">
+          <h2>repo files</h2>
+          <span class="mode-hint" id="filesMeta"></span>
+        </div>
+        <div class="filepills" id="filePills"></div>
+        <div class="fileview hidden" id="fileView">
+          <div class="fileview-bar">
+            <span id="fileViewPath"></span>
+            <button id="fileViewClose" title="close">✕</button>
+          </div>
+          <pre id="fileViewPre"></pre>
+        </div>
       </div>
     </section>
 

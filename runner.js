@@ -13,7 +13,8 @@
        local bridge and the app's own UI opens at 127.0.0.1:<port> in-frame */
 
 import { fetchRepoFiles } from "./repo_fetch.js";
-import { detectGuiSignals, extractPorts } from "./runner_core.js";
+import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps } from "./runner_core.js";
+import { scanTree } from "./cleanroom.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 
@@ -45,6 +46,25 @@ const pcWebNet = document.getElementById("pcWebNet");
 const pcWebStart = document.getElementById("pcWebStart");
 const pcWebStop = document.getElementById("pcWebStop");
 const pcWebChips = document.getElementById("pcWebChips");
+const triCard = document.getElementById("triCard");
+const triScore = document.getElementById("triScore");
+const triVerdict = document.getElementById("triVerdict");
+const triMeta = document.getElementById("triMeta");
+const triToggle = document.getElementById("triToggle");
+const triBody = document.getElementById("triBody");
+const triCats = document.getElementById("triCats");
+const triFindings = document.getElementById("triFindings");
+const triEnv = document.getElementById("triEnv");
+const triCheck = document.getElementById("triCheck");
+const runRow = document.getElementById("runRow");
+const filesCard = document.getElementById("filesCard");
+const filesMeta = document.getElementById("filesMeta");
+const filePills = document.getElementById("filePills");
+const fileView = document.getElementById("fileView");
+const fileViewPath = document.getElementById("fileViewPath");
+const fileViewPre = document.getElementById("fileViewPre");
+const fileViewClose = document.getElementById("fileViewClose");
+const shelfRow = document.getElementById("shelfRow");
 
 /* run mode: "vm" (WebAssembly in this tab) or "pc" (real processes via the
    localhost bridge started by `python cleanroom.py serve`) */
@@ -151,6 +171,215 @@ function hintChip(text) {
 function setLiveStatus(msg, isError) {
   liveStatus.textContent = msg;
   liveStatus.className = "status" + (isError ? " error" : "");
+}
+
+/* ---------- see it before you run it: report card, run cards, file browser ---------- */
+
+function runCommand(cmd) {
+  termInput.value = "";
+  line("repo> " + cmd, "t-echo");
+  if (mode === "pc") pcExec(cmd); else execLine(cmd);
+}
+
+function renderRunCards(items) {
+  if (!runRow) return;
+  runRow.replaceChildren();
+  if (!items.length) { runRow.classList.add("hidden"); return; }
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.className = "runcard" + (it.kind === "approve" ? " danger" : "");
+    b.innerHTML = "▶ <b></b>";
+    b.querySelector("b").textContent = it.label;
+    b.title = it.cmd;
+    b.addEventListener("click", () => runCommand(it.cmd));
+    runRow.appendChild(b);
+  }
+  runRow.classList.remove("hidden");
+}
+
+const VERDICT_CLS = { clean: "v-clean", caution: "v-caution",
+                      "high-risk": "v-high-risk", dangerous: "v-dangerous" };
+
+function renderTriCard(report, label, filesScanned) {
+  if (!triCard) return;
+  triScore.textContent = report.score;
+  triScore.style.color = report.score >= 25 ? "var(--red)"
+                        : report.score >= 10 ? "var(--amber)" : "var(--accent)";
+  triVerdict.textContent = report.verdict.toUpperCase();
+  triVerdict.className = "verdict-word " + (VERDICT_CLS[report.verdict] || "");
+  triMeta.replaceChildren();
+  const l = document.createElement("b");
+  l.textContent = label;
+  triMeta.appendChild(l);
+  triMeta.append(document.createElement("br"),
+    filesScanned + " files scanned · " + report.findings.length + " findings (" +
+    report.findings.filter(f => f.severity !== "info").length + " scored)");
+  triCats.replaceChildren();
+  for (const [cat, n] of Object.entries(report.by_category || {})) {
+    const chip = document.createElement("span");
+    chip.className = "chip info";
+    chip.textContent = cat + " × " + n;
+    triCats.appendChild(chip);
+  }
+  triFindings.replaceChildren();
+  const scored = report.findings.filter(f => f.severity !== "info");
+  const infos = report.findings.filter(f => f.severity === "info");
+  const rows = scored.concat(infos.slice(0, 40));
+  const cls = { critical: "crit", high: "high", medium: "med", info: "info" };
+  if (!rows.length) {
+    const row = div("frow");
+    row.innerHTML = '<span class="rule">—</span><span class="where">—</span><span class="snip">nothing found</span>';
+    triFindings.appendChild(row);
+  }
+  for (const f of rows) {
+    const row = div("frow");
+    row.style.gridTemplateColumns = "86px 150px 1fr 220px";
+    const what = RULE_WHAT[f.rule];
+    row.innerHTML =
+      '<span class="chip ' + (cls[f.severity] || "info") + '"></span>' +
+      '<span class="rule"></span>' +
+      '<span class="snip"></span>' +
+      '<span class="where"></span>' +
+      (what ? '<span class="fwhat"></span>' : "");
+    const s = row.children;
+    s[0].textContent = f.severity;
+    s[1].textContent = f.rule;
+    s[2].textContent = f.snippet;
+    s[2].title = f.snippet;
+    s[3].textContent = f.file + ":" + f.line;
+    if (what) { s[4].textContent = "· " + what; s[4].style.gridColumn = "1 / -1"; }
+    triFindings.appendChild(row);
+  }
+  triEnv.replaceChildren();
+  if (!(report.touched_env || []).length) {
+    const chip = document.createElement("span");
+    chip.className = "chip env";
+    chip.textContent = "reads no environment variables";
+    triEnv.appendChild(chip);
+  } else {
+    for (const name of report.touched_env) {
+      const chip = document.createElement("span");
+      chip.className = "chip env";
+      chip.textContent = name;
+      triEnv.appendChild(chip);
+    }
+  }
+  triCheck.replaceChildren();
+  for (const step of beforeRunSteps(report)) {
+    const li = document.createElement("li");
+    li.textContent = step;
+    triCheck.appendChild(li);
+  }
+  triBody.classList.add("hidden");
+  triToggle.textContent = "show findings ▾";
+  triCard.classList.remove("hidden");
+}
+
+triToggle?.addEventListener("click", () => {
+  if (!triBody) return;
+  const open = !triBody.classList.contains("hidden");
+  triBody.classList.toggle("hidden", open);
+  triToggle.textContent = open ? "show findings ▾" : "hide findings ▴";
+});
+
+/* the file browser: every file the repo has, clickable, strictly read-only */
+const FILE_VIEW_MAX = 256 * 1024;
+
+function renderFilePills(paths) {
+  if (!filesCard || !filePills) return;
+  filePills.replaceChildren();
+  if (fileView) fileView.classList.add("hidden");
+  if (!paths.length) { filesCard.classList.add("hidden"); return; }
+  for (const p of paths.slice(0, 200)) {
+    const b = document.createElement("button");
+    b.className = "filepill";
+    b.textContent = p;
+    b.title = "view (read-only): " + p;
+    b.addEventListener("click", () => viewRepoFile(p));
+    filePills.appendChild(b);
+  }
+  if (paths.length > 200) {
+    const more = div("mode-hint");
+    more.style.flexBasis = "100%";
+    more.textContent = "… " + (paths.length - 200) + " more files — type 'ls' to list them";
+    filePills.appendChild(more);
+  }
+  if (filesMeta) {
+    filesMeta.textContent = paths.length + " files · click one to read it (read-only — nothing executes)";
+  }
+  filesCard.classList.remove("hidden");
+}
+
+function showFileView(path, text, note) {
+  if (!fileView || !fileViewPath || !fileViewPre) return;
+  fileViewPath.textContent = path;
+  fileViewPre.textContent = note || text;
+  fileView.classList.remove("hidden");
+  fileView.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+async function viewRepoFile(path) {
+  if (mode === "pc") {
+    const { data } = await bridgeCall("/api/file", { path });
+    if (!data.ok) { line("file: " + (data.error || "unreadable"), "t-err"); return; }
+    if (data.too_big) {
+      showFileView(path, "", "(file is " + Math.round(data.size / 1024) + " KB — over the 256 KB view cap)");
+      return;
+    }
+    if (data.binary) { showFileView(path, "", "(binary or non-UTF-8 file — not shown)"); return; }
+    showFileView(path, data.text);
+    return;
+  }
+  const entry = vmFiles.find(f => f[0] === path);
+  if (!entry) { line("no such file: " + path, "t-err"); return; }
+  if (entry[1].length > FILE_VIEW_MAX) {
+    showFileView(path, "", "(file is over 256 KB — not shown here)");
+    return;
+  }
+  showFileView(path, entry[1]);
+}
+
+fileViewClose?.addEventListener("click", () => fileView?.classList.add("hidden"));
+
+/* wipe/reset clears every panel this section owns */
+function resetRunUi() {
+  triCard?.classList.add("hidden");
+  if (runRow) { runRow.replaceChildren(); runRow.classList.add("hidden"); }
+  if (filePills) filePills.replaceChildren();
+  filesCard?.classList.add("hidden");
+  if (fileView) fileView.classList.add("hidden");
+}
+
+/* the shelf: curated entries that run for real, each saying what you'll see */
+function renderShelf() {
+  if (!shelfRow) return;
+  shelfRow.replaceChildren();
+  for (const item of SHELF) {
+    const b = document.createElement("button");
+    b.className = "shelfbtn";
+    const name = document.createElement("b");
+    name.textContent = item.repo.replace("https://github.com/amanvicky/", "");
+    const what = document.createElement("small");
+    what.textContent = item.what;
+    b.appendChild(name);
+    b.appendChild(what);
+    b.title = item.repo + " — verified at commit " + item.at;
+    b.addEventListener("click", () => {
+      liveUrl.value = item.repo;
+      loadRepo(item.repo);
+    });
+    shelfRow.appendChild(b);
+  }
+  const you = document.createElement("button");
+  you.className = "shelfbtn yours";
+  const yn = document.createElement("b");
+  yn.textContent = "your repo";
+  const yw = document.createElement("small");
+  yw.textContent = "paste any GitHub link above — nothing installs";
+  you.appendChild(yn);
+  you.appendChild(yw);
+  you.addEventListener("click", () => liveUrl.focus());
+  shelfRow.appendChild(you);
 }
 
 const HELP = [
@@ -1024,7 +1253,7 @@ function listRepoFiles() {
   return out.sort();
 }
 
-const RUNNABLE = /\.(py|json|txt|csv|toml|cfg|ini|md)$/i;
+const RUNNABLE = /\.(py|json|jsonl|txt|csv|toml|cfg|ini|md)$/i;
 const ENTRIES = ["main.py", "app.py", "demo.py", "run.py", "cli.py", "__main__.py"];
 
 function suggestCommands(files) {
@@ -1050,6 +1279,7 @@ function suggestCommands(files) {
 
 async function loadRepo(raw) {
   loadBtn.disabled = true;
+  termInput.disabled = true;
   liveCard.classList.remove("hidden");
   try {
     if (mode === "pc") await pcLoadRepo(raw);
@@ -1059,6 +1289,7 @@ async function loadRepo(raw) {
     line("failed: " + e.message, "t-err");
   } finally {
     loadBtn.disabled = false;
+    termInput.disabled = false;
   }
 }
 
@@ -1080,17 +1311,25 @@ async function vmLoadRepo(raw) {
   line(runnable.length + runnableDeep.length + " files → /repo (virtual, in-memory only)", "t-dim");
   line("on your device: " + deviceInfo(), "t-dim");
   const sig = detectGuiSignals(files);
+  const rep = scanTree(files);
+  line("triage: " + rep.score + "/100 " + rep.verdict.toUpperCase() +
+       " · " + rep.findings.length + " findings — the report card below has the details",
+       rep.score >= 25 ? "t-err" : "t-dim");
+  renderTriCard(rep, label, files.length);
+  const cards = [];
   if (sig.tkinter) {
     line("GUI app detected (tkinter) — the virtual screen is ready", "t-meta");
-    hintChip("run " + sig.entry);
+    cards.push({ label: "run " + sig.entry, cmd: "run " + sig.entry, kind: "run" });
   }
   if (sig.webapp) {
     line("static web app detected — it opens sandboxed in the app screen", "t-meta");
-    hintChip("preview");
+    cards.push({ label: "preview the web app", cmd: "preview", kind: "run" });
   }
   if (sig.rails) {
     line("Ruby on Rails app — the in-tab VM is Python-only. In 'this PC' mode (with Ruby installed), 'Start app' runs it on your machine and its real UI opens in the app screen.", "t-dim");
   }
+  renderRunCards(cards);
+  renderFilePills(files.map(f => f[0]));
   line("the VM is yours. type a command, or 'help'.", "t-dim");
   const hints = suggestCommands(files);
   if (hints.length && !sig.tkinter) {
@@ -1144,14 +1383,24 @@ async function pcLoadRepo(raw) {
     line("sandbox ready on your PC: scrubbed secrets, disposable venv (pip never touches your real Python), no outbound network (python), wiped on exit", "t-dim");
   }
   const hints = [];
+  const sig = detectGuiSignals((data.paths || []).map(p => [p, ""]));
+  renderTriCard(rep, raw + " @ " + (data.commit || "?"), (data.paths || []).length);
+  const cards = [];
   if (data.tkinter_entry) {
     line("GUI app detected (tkinter) — on this PC it opens a real window on your desktop:", "t-meta");
-    hintChip("run " + data.tkinter_entry);
+    cards.push({ label: "run " + data.tkinter_entry, cmd: "run " + data.tkinter_entry, kind: "run" });
   }
-  const sig = detectGuiSignals((data.paths || []).map(p => [p, ""]));
   if (sig.rails) {
     line("Ruby on Rails app — 'Start app' below runs it here if Ruby is installed on this machine.", "t-dim");
   }
+  for (const h of sig.hints) {
+    cards.push({ label: "serve: " + h.label, cmd: "serve " + h.cmd, kind: "serve" });
+  }
+  if (data.needs_approval) {
+    cards.push({ label: "approve — run it anyway (my responsibility)", cmd: "approve", kind: "approve" });
+  }
+  renderRunCards(cards);
+  renderFilePills(data.paths || []);
   if (sig.hints.length) {
     line("run it as a real app (its UI opens in the app screen):", "t-meta");
     renderPcWebChips(sig.hints);
@@ -1223,6 +1472,7 @@ async function pcExec(text) {
     pcWebChips.innerHTML = "";
     pcWebStop.classList.add("hidden");
     pcWebStart.classList.remove("hidden");
+    resetRunUi();
     renderStageChips();
     return;
   }
@@ -1269,7 +1519,7 @@ async function pcExec(text) {
     return;
   }
   if (c === "ls") {
-    line("(this-PC mode — the clone lives in the sandbox; use 'run <file>' or the app screen)", "t-dim");
+    line("(this-PC mode — the clone lives in the sandbox; the repo-files panel lists every file, or use 'run <file>')", "t-dim");
     return;
   }
   const runMatch = c.match(/^run\s+(\S+)$/);
@@ -1410,6 +1660,7 @@ del _keep, _m, _k, _spares
   await installShim(pyodide);
   window.__cleanroomGui.reset();
   vmFiles = [];
+  resetRunUi();
   line("wiped — files, variables and modules erased. residue: 0. nothing was ever on your disk.", "t-meta");
   line("load another repo with the box above, or keep going with plain python.", "t-dim");
 }
@@ -1439,6 +1690,7 @@ document.querySelectorAll("button[data-live-preset]").forEach(btn => {
     loadRepo(btn.dataset.livePreset);
   });
 });
+renderShelf();
 appCloseBtn?.addEventListener("click", () => appCard.classList.add("hidden"));
 pcWebStart?.addEventListener("click", pcWebStartFn);
 pcWebStop?.addEventListener("click", pcWebStopFn);

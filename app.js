@@ -3,6 +3,7 @@
 
 import { scanTree } from "./cleanroom.js";
 import { fetchRepoFiles } from "./repo_fetch.js";
+import { beforeRunSteps } from "./runner_core.js";
 import "./runner.js";
 
 function status(msg, isError) {
@@ -14,28 +15,6 @@ function status(msg, isError) {
 async function scanRepoUrl(raw) {
   const { files, label } = await fetchRepoFiles(raw);
   return { report: scanTree(files), label, files: files.length };
-}
-
-const CHECKS = [
-  ["INSTALL_HOOK", "this repo runs code at INSTALL time (npm pre/postinstall) — that executes before anyone reviews it"],
-  ["SETUP_HOOK", "setup.py overrides build/install steps — read them first"],
-];
-const CAT_CHECKS = [
-  ["secrets", "credential-shaped strings are present — assume any key you can see, attackers can see too"],
-  ["typosquat", "a dependency name closely mimics a popular package — verify the spelling on the registry page"],
-  ["persistence", "code touches shell profiles / schedulers — that survives your session even if the sandbox is wiped"],
-  ["exec", "dynamic execution (eval/exec/pickle) — obfuscated payloads hide behind these calls"],
-  ["network", "it phones home — if you run it, run it with outbound network blocked"],
-];
-
-function beforeYouRun(rep) {
-  const rules = new Set(rep.findings.map(f => f.rule));
-  const cats = new Set(Object.keys(rep.by_category));
-  const steps = [];
-  for (const [rule, text] of CHECKS) if (rules.has(rule)) steps.push(text);
-  for (const [cat, text] of CAT_CHECKS) if (cats.has(cat)) steps.push(text);
-  if (!steps.length) steps.push("no red flags in static triage — treat “clean” as “nothing obvious”, not “safe”");
-  return steps;
 }
 
 function render({ report, label, files }) {
@@ -96,7 +75,7 @@ function render({ report, label, files }) {
 
   const list = document.getElementById("checklist");
   list.innerHTML = "";
-  for (const step of beforeYouRun(report)) {
+  for (const step of beforeRunSteps(report)) {
     const li = document.createElement("li");
     li.textContent = step;
     list.appendChild(li);

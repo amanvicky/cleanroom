@@ -126,6 +126,35 @@ def test_py_mode_uses_repl_echo_semantics(server):
     _post(base, "/api/wipe", {}, b.token)
 
 
+def test_file_viewer_reads_guards_and_reports_binary(server):
+    b, base = server
+    _post(base, "/api/open", {"url": _fixture("benign-notes-app")}, b.token)
+    # a real text file comes back readable
+    s, res = _post(base, "/api/file", {"path": "gui_notes.py"}, b.token)
+    assert s == 200 and res["ok"] and res["binary"] is False
+    assert "mainloop" in res["text"]
+    # nested paths work
+    s, res = _post(base, "/api/file", {"path": "webapp/index.html"}, b.token)
+    assert s == 200 and res["ok"] and "replaceChildren" in res["text"]
+    # traversal and absolute shapes are refused outright
+    for bad in ("../outside.txt", "a/../../outside.txt", "/abs.txt", "..\\win.txt", "dir/"):
+        s, res = _post(base, "/api/file", {"path": bad}, b.token)
+        assert res["ok"] is False and res["error"] == "bad path", bad
+    # a missing file is an honest refusal, not a guess
+    s, res = _post(base, "/api/file", {"path": "nope.txt"}, b.token)
+    assert res["ok"] is False and "no such file" in res["error"]
+    # binary content is detected as binary, never decoded into garbage
+    sess = b.session
+    with open(os.path.join(sess.dir, "repo", "blob.bin"), "wb") as fh:
+        fh.write(b"\x00\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    s, res = _post(base, "/api/file", {"path": "blob.bin"}, b.token)
+    assert res["ok"] and res["binary"] is True and res["text"] is None
+    # after the wipe there is nothing to read from
+    _post(base, "/api/wipe", {}, b.token)
+    s, res = _post(base, "/api/file", {"path": "app.py"}, b.token)
+    assert res["ok"] is False and "no open session" in res["error"]
+
+
 WEB_PORT = 8747
 
 
