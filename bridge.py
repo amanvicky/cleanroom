@@ -25,7 +25,7 @@ import sandbox
 import stages as stages_mod
 import triage
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 
 # the read-only file viewer's per-file cap (bytes); bigger files report
 # their size instead of their contents

@@ -17,6 +17,9 @@ import { detectGuiSignals, extractPorts, RULE_WHAT, SHELF, beforeRunSteps } from
 import { scanTree } from "./cleanroom.js";
 
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
+// keep in step with bridge.py VERSION — printed on VM boot so a stale cache
+// is always visible in the terminal
+const RUNNER_VERSION = "0.1.7";
 
 let pyodide = null;
 let vmLoading = null;
@@ -1342,7 +1345,7 @@ async function loadRepo(raw) {
 
 async function vmLoadRepo(raw) {
   const started = performance.now();
-  line("cleanroom live runner — a disposable Python VM inside this tab", "t-meta");
+  line("cleanroom live runner v" + RUNNER_VERSION + " — a disposable Python VM inside this tab", "t-meta");
   line("nothing to install · nothing to pay · nothing left behind", "t-dim");
   const { files, label } = await fetchRepoFiles(raw,
     (d, n) => setLiveStatus("fetching repo files " + d + "/" + n + "…"),
@@ -1379,6 +1382,9 @@ async function vmLoadRepo(raw) {
   }
   renderRunCards(cards);
   renderFilePills(files.map(f => f[0]));
+  if (!files.some(([p]) => /\.py$/i.test(p))) {
+    line("this repo has no Python files — the in-tab VM runs Python only, so there is nothing to execute here. the triage report above still applies.", "t-dim");
+  }
   line("the VM is yours. type a command, or 'help'.", "t-dim");
   const hints = suggestCommands(files);
   if (hints.length && !sig.tkinter) {

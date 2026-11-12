@@ -34,6 +34,11 @@ self.addEventListener("fetch", (event) => {
       // simply fall back to the honest single-thread path.
       headers.set("Cross-Origin-Embedder-Policy", "credentialless");
       headers.set("Cross-Origin-Resource-Policy", "same-origin");
+      // GitHub Pages serves this page with max-age=600, which can mask a
+      // fresh deploy behind a browser's cache for ten minutes. no-cache
+      // means "store, but revalidate on every load" — a cheap 304 when
+      // nothing changed, and the new build the moment it ships.
+      headers.set("Cache-Control", "no-cache");
       return new Response(await res.arrayBuffer(),
                           { status: res.status, statusText: res.statusText, headers });
     } catch (e) {
