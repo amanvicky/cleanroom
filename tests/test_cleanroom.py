@@ -73,6 +73,18 @@ def test_secret_patterns(pattern, label):
     assert label in {f["rule"] for f in rep["findings"]}
 
 
+def test_css_custom_property_is_not_a_secret():
+    # the real-world miss behind the rule: chart style tokens in a Rails
+    # component (`token: "--color-success"`) are color names, not credentials
+    chart = ('LOAN_SERIES_STYLES = { "actual" => { token: "--color-success", '
+             'dashed: false } }\nPALETTE = { saved: { token: "--color-warning" } }\n')
+    rep = triage.scan_tree([("app/components/UI/account/chart.rb", chart)])
+    assert not any(f["rule"] == "HARDCODED_SECRET" for f in rep["findings"])
+    # a genuinely secret-shaped value on the same keyword still fires
+    rep2 = triage.scan_tree([("settings.rb", 'auth_token = "s3cr3t-value-123456"')])
+    assert any(f["rule"] == "HARDCODED_SECRET" for f in rep2["findings"])
+
+
 def test_typosquat_flags_lookalikes_not_the_real_package():
     rep = triage.scan_tree([("requirements.txt", "reqeusts==2.31.0\nrequests==2.31.0\n")])
     flagged = [f["snippet"] for f in rep["findings"] if f["rule"] == "TYPOSQUAT_HINT"]

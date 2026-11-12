@@ -46,7 +46,9 @@ export const TEXT_RULES = [
   ["SLACK_TOKEN", "critical", "secrets", "xox[baprs]-[0-9A-Za-z\\-]{10,}", "", null],
   ["STRIPE_KEY", "critical", "secrets", "sk_live_[0-9A-Za-z]{16,}", "", null],
   ["HARDCODED_SECRET", "medium", "secrets",
-   "(password|passwd|secret|api_?key|token)\\s*[=:]\\s*[\\\"'][^\\\"']{12,}[\\\"']",
+   // a value that opens with "--" is a CSS custom property name — never a
+   // secret (kept identical to the triage.py pattern; parity-check asserts it)
+   "(password|passwd|secret|api_?key|token)\\s*[=:]\\s*[\\\"'](?!--)[^\\\"']{12,}[\\\"']",
    "i", new Set([".py", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".sh", ".bash",
                  ".yml", ".yaml", ".toml", ".cfg", ".ini", ".env", ".rb", ".go",
                  ".rs", ".php", ".pl", ".ps1", ".bat", ".html"])],

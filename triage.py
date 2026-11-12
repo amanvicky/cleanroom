@@ -58,7 +58,10 @@ TEXT_RULES = [
     ("SLACK_TOKEN", "critical", "secrets", r"xox[baprs]-[0-9A-Za-z\-]{10,}", "", None),
     ("STRIPE_KEY", "critical", "secrets", r"sk_live_[0-9A-Za-z]{16,}", "", None),
     ("HARDCODED_SECRET", "medium", "secrets",
-     r"(password|passwd|secret|api_?key|token)\s*[=:]\s*[\"'][^\"']{12,}[\"']",
+     # a value that opens with "--" is a CSS custom property name (chart
+     # styles, theme tokens) — never a secret. real-world miss found on
+     # we-promise/sure: `token: "--color-success"` in app/components.
+     r"(password|passwd|secret|api_?key|token)\s*[=:]\s*[\"'](?!--)[^\"']{12,}[\"']",
      "i", {".py", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".sh", ".bash",
            ".yml", ".yaml", ".toml", ".cfg", ".ini", ".env", ".rb", ".go",
            ".rs", ".php", ".pl", ".ps1", ".bat", ".html"}),

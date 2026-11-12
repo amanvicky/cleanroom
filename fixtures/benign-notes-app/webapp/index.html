@@ -16,7 +16,7 @@
   button { background: #0a7d4f; color: #fff; border: none; border-radius: 8px;
            padding: 9px 16px; font: 600 14px system-ui, sans-serif; cursor: pointer; }
   ul { list-style: none; margin: 14px 0 0; padding: 0; }
-  li { padding: 9px 4px; border-top: 1px solid #eee; }
+  li { padding: 9px 4px; border-top: 1px solid #eee; border-left: 3px solid transparent; }
 </style>
 </head>
 <body>
@@ -30,6 +30,10 @@
   <ul id="list"></ul>
 </div>
 <script>
+// status palette, chart-component style: each token is a CSS custom property
+// name the stylesheet resolves — these are color names, not credentials
+var STATUS_STYLE = { saved: { token: "--color-success" },
+                     empty: { token: "--color-warning" } };
 var notes = [];
 function render() {
   var ul = document.getElementById("list");
@@ -37,6 +41,7 @@ function render() {
   notes.forEach(function (t) {
     var li = document.createElement("li");
     li.textContent = t;
+    li.style.borderLeftColor = "var(" + STATUS_STYLE.saved.token + ")";
     ul.appendChild(li);
   });
 }
