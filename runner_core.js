@@ -154,7 +154,7 @@ export const SHELF = [
   { repo: "https://github.com/amanvicky/notebook-demo",
     what: "three tabs, real switching — the audit's #1 blocker now renders", at: "f40eaf2" },
   { repo: "https://github.com/amanvicky/asking-cli",
-    what: "an input() quiz — the terminal box queues answers for the VM's stdin", at: "b472840" },
+    what: "an input() quiz — the terminal box queues answers for the VM's stdin", at: "75c5601" },
 ];
 
 /* README-and-manifest understanding for Python repos: what to install and
