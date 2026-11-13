@@ -20,7 +20,7 @@ import { scanTree } from "./cleanroom.js";
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 // keep in step with bridge.py VERSION — printed on VM boot so a stale cache
 // is always visible in the terminal
-const RUNNER_VERSION = "0.1.7";
+const RUNNER_VERSION = "0.1.8";
 
 let pyodide = null;
 let vmLoading = null;
@@ -476,6 +476,23 @@ try:
     os.chdir("/repo")
 except Exception:
     pass
+import builtins as _cr_b, js as _cr_js
+def __cr_input(prompt="", _pop=_cr_js.__crStdinPop, _echo=_cr_js.__crTermEcho):
+    # the stdin lane: the VM has no worker threads and sync code freezes the
+    # page, so input() is served from lines the user queued in the terminal
+    # box — before the run for sync apps, between awaits for async ones.
+    # The JS side binds as default args: the boot script deletes its module
+    # aliases, and default args keep the functions reachable at call time.
+    if prompt:
+        _echo(str(prompt))
+    _line = _pop()
+    if _line is None:
+        raise EOFError(
+            "no stdin lines queued — type each answer in the box above and "
+            "press Enter (one line per input() call), then run the app again")
+    return _line
+_cr_b.input = __cr_input
+del _cr_b, _cr_js
 `;
 
 async function ensureVM(onStatus) {
@@ -509,6 +526,11 @@ async function ensureVM(onStatus) {
 /* ---------- the app screen: virtual tkinter + sandboxed web preview ---------- */
 
 let guiEv = null;          // PyProxy of builtins.__cr_gui_event (set by the shim)
+let stdinQueue = [];       // lines typed in the terminal box for the app's input() calls
+let stdinArmed = false;    // the loaded repo's Python code calls input()
+window.__crStdinPop = () => (stdinQueue.length ? stdinQueue.shift() : null);
+window.__crStdinArmed = () => stdinArmed;   // test/inspection hook
+window.__crTermEcho = (s) => line(String(s).replace(/\n$/, ""), "t-out");
 let shimSrc = null;
 let nextId = 1;
 const W = new Map();       // widget id → record
@@ -573,6 +595,13 @@ function margins(px, py) {
   const x = Array.isArray(px) ? (px[0] || 0) : (px || 0);
   const y = Array.isArray(py) ? (py[0] || 0) : (py || 0);
   return y + "px " + x + "px";
+}
+
+function activateTab(rec, i) {
+  if (!rec.panels || !rec.tabs.length) return;
+  rec.active = i;
+  Array.from(rec.tabbar.children).forEach((t, j) => t.classList.toggle("tktab-on", j === i));
+  Array.from(rec.panels.children).forEach((p, j) => p.classList.toggle("tkpanel-off", j !== i));
 }
 
 function buildEl(rec) {
@@ -702,6 +731,17 @@ function buildEl(rec) {
     }
     case "scrollbar": el = div("tk-noscroll"); break;
     case "menu": el = document.createComment("menu"); break;
+    case "notebook": {
+      // ttk.Notebook — a tab bar plus one panel per added child
+      el = div("tknotebook");
+      rec.tabbar = div("tktabs");
+      rec.panels = div("tkpanels");
+      rec.tabs = [];
+      rec.active = -1;
+      el.appendChild(rec.tabbar);
+      el.appendChild(rec.panels);
+      break;
+    }
     default: el = div("tkframe");
   }
   return el;
@@ -968,6 +1008,7 @@ function guiApiImpl() {
       rec.el = buildEl(rec);
       W.set(id, rec);
       const p = W.get(parentId);
+      if (p) p.kids.push(rec);
       if (p && p.body) p.body.appendChild(rec.el);
       else if (p && p.el && p.el.nodeType === 1) p.el.appendChild(rec.el);
       else if (rec.kind === "root" || rec.kind === "toplevel") appContent.appendChild(rec.el);
@@ -1081,6 +1122,53 @@ function guiApiImpl() {
         return 0;
       }
       return 0;
+    },
+    notebook(id, op, payloadJson) {
+      // ttk.Notebook ops from the shim: add a child as a tab, select a tab,
+      // retitle a tab, forget one. Tab clicks are pure renderer state — real
+      // tkinter has no callback for switching either.
+      const rec = W.get(id);
+      if (!rec || !rec.panels) return -1;
+      let p = {};
+      try { p = JSON.parse(payloadJson || "{}"); } catch (e) { /* keep {} */ }
+      if (op === "add") {
+        const child = W.get(p.widget);
+        const panel = div("tkpanel");
+        rec.panels.appendChild(panel);
+        if (child && child.el && child.el.nodeType === 1) panel.appendChild(child.el);
+        const tab = document.createElement("button");
+        tab.type = "button";
+        tab.className = "tktab";
+        tab.textContent = String(p.text || "tab " + rec.tabs.length);
+        tab.addEventListener("click", () =>
+          activateTab(rec, Array.from(rec.tabbar.children).indexOf(tab)));
+        rec.tabbar.appendChild(tab);
+        rec.tabs.push({ tab, panel, text: String(p.text || "") });
+        if (rec.active < 0) activateTab(rec, 0);
+        return rec.tabs.length - 1;
+      }
+      if (op === "select") {
+        const i = Math.min(Math.max(p.index | 0, 0), rec.tabs.length - 1);
+        if (rec.tabs.length) activateTab(rec, i);
+        return i;
+      }
+      if (op === "settext") {
+        const t = rec.tabs[p.index];
+        if (t) { t.text = String(p.text ?? ""); t.tab.textContent = t.text; }
+        return 0;
+      }
+      if (op === "forget") {
+        const i = p.index | 0;
+        if (i >= 0 && i < rec.tabs.length) {
+          rec.tabs[i].tab.remove();
+          rec.tabs[i].panel.remove();
+          rec.tabs.splice(i, 1);
+          if (rec.active >= rec.tabs.length) rec.active = rec.tabs.length - 1;
+          if (rec.tabs.length) activateTab(rec, Math.max(0, rec.active));
+        }
+        return 0;
+      }
+      return rec.active;
     },
     canvas(id, op, payloadJson) {
       const rec = W.get(id);
@@ -1729,6 +1817,7 @@ async function loadRepo(raw) {
   loadBtn.disabled = true;
   termInput.disabled = true;
   liveCard.classList.remove("hidden");
+  setStdinArmed(false);
   try {
     if (mode === "pc") await pcLoadRepo(raw);
     else await vmLoadRepo(raw);
@@ -1781,6 +1870,14 @@ async function vmLoadRepo(raw) {
   renderRunCards(cards);
   renderFilePills(files.map(f => f[0]));
   const setup = parseSetup(new Map(files));
+  if (setup.usesStdin) {
+    setStdinArmed(true);
+    line("stdin lane: this repo's code calls input() and the VM has no keyboard of its own — "
+         + "type each answer in the box above (one line per Enter), then run the entry file. "
+         + "sync apps read the lines you queued; async ones also pick up lines typed between awaits.", "t-dim");
+  } else {
+    setStdinArmed(false);
+  }
   if (setup.installs.length) {
     line("setup understood from the manifests: pip " + setup.installs.join(", "), "t-dim");
     cards.push({ label: "set up & run — install " + setup.installs.length +
@@ -2175,6 +2272,7 @@ del _keep, _m, _k, _spares
   await installShim(pyodide);
   window.__cleanroomGui.reset();
   vmFiles = [];
+  setStdinArmed(false);
   resetRunUi();
   line("wiped — files, variables and modules erased. residue: 0. nothing was ever on your disk.", "t-meta");
   line("load another repo with the box above, or keep going with plain python.", "t-dim");
@@ -2191,14 +2289,32 @@ loadBtn.addEventListener("click", () => loadRepo(liveUrl.value));
 liveUrl.addEventListener("keydown", e => {
   if (e.key === "Enter") loadRepo(liveUrl.value);
 });
+const IS_COMMAND = /^(clear|help|\?|wipe|preview|setup|serve|screen|stages|save|resume|forget|ls|run|pip)\b/;
 termInput.addEventListener("keydown", async e => {
-  if (e.key !== "Enter" || busy) return;
+  if (e.key !== "Enter") return;
   const text = termInput.value;
+  const trimmed = text.trim();
+  // the stdin lane: when the app asks for input, plain lines queue for its
+  // input() calls; commands (run <file>…) still go through as usual
+  if (stdinArmed && trimmed && (busy || !IS_COMMAND.test(trimmed))) {
+    termInput.value = "";
+    stdinQueue.push(text.replace(/\n+$/, ""));
+    line("stdin> " + trimmed, "t-echo");
+    return;
+  }
+  if (busy) return;
   termInput.value = "";
   line("repo> " + text, "t-echo");
   if (mode === "pc") await pcExec(text);
   else await execLine(text);
 });
+function setStdinArmed(on) {
+  stdinArmed = on;
+  if (on) stdinQueue = [];
+  termInput.placeholder = on
+    ? "answers for input() — one line per Enter; 'run <file>' starts the app"
+    : "python, or: run main.py · preview · ls · help · wipe";
+}
 document.querySelectorAll("button[data-live-preset]").forEach(btn => {
   btn.addEventListener("click", () => {
     liveUrl.value = btn.dataset.livePreset;

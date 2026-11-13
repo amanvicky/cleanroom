@@ -816,6 +816,79 @@ class Scrollbar(_Widget):
         pass
 
 
+class Notebook(_Widget):
+    """ttk.Notebook — the audit's #1 blocker (10 of 20 top-starred tkinter
+    repos). Rendered as a real tab bar; tabs switch visually, which is what
+    real tkinter does too (no callback fires on switch)."""
+
+    _kind = "notebook"
+
+    def __init__(self, master=None, cnf=None, **kw):
+        self._tabs = []      # {"widget": child, "text": str}
+        self._current = -1
+        super().__init__(master, cnf, **kw)
+
+    def _resolve(self, tab):
+        if isinstance(tab, int):
+            return tab
+        for i, t in enumerate(self._tabs):
+            if t["widget"] is tab:
+                return i
+        try:
+            return int(str(tab))
+        except (TypeError, ValueError):
+            return None
+
+    def add(self, child, **kw):
+        text = str(kw.get("text", ""))
+        self._tabs.append({"widget": child, "text": text})
+        gui.notebook(self._id, "add",
+                     _json.dumps({"widget": getattr(child, "_id", 0), "text": text}))
+        if self._current < 0:
+            self._current = 0
+
+    def select(self, tab=None):
+        if tab is None:
+            return self._tabs[self._current]["widget"] if 0 <= self._current < len(self._tabs) else None
+        idx = self._resolve(tab)
+        if idx is None or not self._tabs:
+            return None
+        idx = max(0, min(idx, len(self._tabs) - 1))
+        self._current = idx
+        gui.notebook(self._id, "select", _json.dumps({"index": idx}))
+        return self._tabs[idx]["widget"]
+
+    def index(self, child):
+        idx = self._resolve(child)
+        if idx is None or not (0 <= idx < len(self._tabs)):
+            raise TclError("not a tab of this notebook")
+        return idx
+
+    def tab(self, tab_id, option=None, **kw):
+        idx = self._resolve(tab_id)
+        if idx is None or not (0 <= idx < len(self._tabs)):
+            raise TclError("no such tab")
+        if option is not None:
+            kw.setdefault(option, None)
+        if "text" in kw and kw["text"] is not None:
+            self._tabs[idx]["text"] = str(kw["text"])
+            gui.notebook(self._id, "settext",
+                         _json.dumps({"index": idx, "text": str(kw["text"])}))
+            return None if option is None else str(kw["text"])
+        if option is not None and option != "text":
+            _unsupported("Notebook.tab option '" + str(option) + "'")
+            return None
+        return {"text": self._tabs[idx]["text"]}
+
+    def forget(self, child):
+        idx = self._resolve(child)
+        if idx is not None and 0 <= idx < len(self._tabs):
+            self._tabs.pop(idx)
+            if self._current >= len(self._tabs):
+                self._current = len(self._tabs) - 1
+            gui.notebook(self._id, "forget", _json.dumps({"index": idx}))
+
+
 class Menu(_Widget):
     _kind = "menu"
 
@@ -877,6 +950,7 @@ def _install_submodules(mod):
         Frame=Frame, Label=Label, Button=Button, Entry=Entry,
         Checkbutton=Checkbutton, Radiobutton=Radiobutton, Scale=Scale,
         Combobox=Entry, Separator=Frame, Sizegrip=Frame,
+        Notebook=Notebook,
         Style=_t.SimpleNamespace,
         Labelframe=LabelFrame, LabelFrame=LabelFrame,
     )
@@ -903,8 +977,7 @@ def _install_submodules(mod):
                 " — run the app on a real PC instead: `python cleanroom.py run <repo>`")
         return gone
 
-    for _name in ("Treeview", "Notebook", "Progressbar", "Panedwindow",
-                  "PanedWindow", "Scrollbar", "Spinbox", "Notebook"):
+    for _name in ("Treeview", "Progressbar", "Panedwindow", "PanedWindow"):
         setattr(ttk, _name, _not_available("ttk." + _name))
     ttk.Scrollbar = Scrollbar
     ttk.Spinbox = Spinbox

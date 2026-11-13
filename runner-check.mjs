@@ -143,6 +143,18 @@ ok(setup2.appKind === "cli", "parseSetup: plain repo stays cli");
 const setup3 = parseSetup(new Map([["manage.py", ""], ["README.md", "a django blog"]]));
 ok(setup3.appKind === "wsgi" && !setup3.installs.length, "parseSetup: django via manage.py, no installs");
 
+/* the stdin lane: input()-using repos get the terminal box as their stdin */
+const setup4 = parseSetup(new Map([
+  ["quiz.py", "name = input('name? ')\nprint('hi', name)\n"],
+  ["util.py", "value = my_input(5)\n"],
+]));
+ok(setup4.usesStdin === true,
+   "parseSetup flags input()-using repos for the stdin lane (and not my_input)");
+const setup5 = parseSetup(new Map([
+  ["app.py", "from flask import Flask\napp = Flask(__name__)"],
+]));
+ok(setup5.usesStdin === false, "parseSetup: no input() call — stdin lane stays off");
+
 /* fullMachineReasons: names exactly why the tab can't carry a repo, plus the
    Codespaces hand-off URL — the honest tier for repos beyond the tab */
 const fmSetup = parseSetup(new Map([

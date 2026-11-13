@@ -197,3 +197,11 @@ def test_supported_widgets_render_as_supported_not_other():
                  "verdict": "no tkinter-subset signals found statically"}]
     doc = tk_audit.render_doc(profiles, "2026-11-14", [], 20)
     assert "| `tk/Label` | supported | 1 | 5 |" in doc
+
+
+def test_notebook_graded_supported_after_the_first_sprint():
+    # the 2026-11-14 audit ranked ttk.Notebook the #1 blocker (10 of 20 repos);
+    # the sprint shipped it as a real tab bar, so it must grade supported now
+    assert ("ttk", "Notebook") not in tk_audit.WEIGHTS
+    assert tk_audit._weight_of(("ttk", "Notebook")) == "supported"
+    assert tk_audit._weight_of(("ttk", "Treeview")) == "blocking"  # still a wall

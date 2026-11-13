@@ -59,9 +59,11 @@ SIGNAL_METHODS = {"bind", "tag_bind", "tag_config", "tag_configure"}
 IMAGE_OPTIONS = {"image", "bitmap", "compound"}
 ROOT_NAMES = {"tkinter", "tk"}  # bare aliases that mean the tkinter root
 
-# what the virtual tkinter does with each of these today (tkinter_shim.py)
+# what the virtual tkinter does with each of these today (tkinter_shim.py).
+# ttk.Notebook left this table after the first audit sprint (2026-11-14): it
+# renders as a real tab bar now, so it grades "supported" automatically.
 WEIGHTS = {
-    ("ttk", "Treeview"): "blocking", ("ttk", "Notebook"): "blocking",
+    ("ttk", "Treeview"): "blocking",
     ("ttk", "Progressbar"): "blocking", ("ttk", "Panedwindow"): "blocking",
     ("ttk", "PanedWindow"): "blocking",
     ("mb", "askyesno"): "behavior", ("mb", "askokcancel"): "behavior",

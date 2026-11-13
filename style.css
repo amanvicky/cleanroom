@@ -344,6 +344,38 @@ h2 {
 .tkcheck input { accent-color: var(--accent); }
 .tkscale { accent-color: var(--accent); max-width: 320px; }
 .tk-noscroll { display: none; }
+.tknotebook {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+.tktabs {
+  display: flex;
+  gap: 2px;
+  background: #0b111a;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.tktab {
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 6px 14px;
+  cursor: pointer;
+  font: 600 13px "Segoe UI", system-ui, sans-serif;
+}
+.tktab:hover { color: #e8eef4; }
+.tktab-on { color: var(--accent); background: #101825; border-color: var(--line); }
+.tkpanels { display: flex; min-height: 0; flex: 1; }
+.tkpanel { display: flex; flex-direction: column; padding: 8px; min-width: 0; flex: 1; gap: 4px; }
+.tkpanel-off { display: none; }
 .tk-disabled { opacity: 0.5; }
 
 .webbar {

@@ -15,13 +15,12 @@ The sprint takes the highest-weight fixable item — the column decides, not int
 
 ## The table
 
-**What the table says:** the highest-weight blocker is `ttk/Notebook`, used by 10 of 20 repos — that is the sprint item. Next by weight: `ttk/Progressbar` (6 repos), `ttk/Treeview` (5 repos).
+**What the table says:** the highest-weight blocker is `ttk/Progressbar`, used by 6 of 20 repos — that is the sprint item. Next by weight: `ttk/Treeview` (5 repos), `ttk/PanedWindow` (2 repos).
 
 Features sorted by weight, then by how many repos use them.
 
 | feature | weight | repos (of 20) | call sites |
 |---|---|---|---|
-| `ttk/Notebook` | blocking | 10 | 20 |
 | `ttk/Progressbar` | blocking | 6 | 15 |
 | `ttk/Treeview` | blocking | 5 | 10 |
 | `ttk/PanedWindow` | blocking | 2 | 5 |
@@ -70,6 +69,7 @@ Features sorted by weight, then by how many repos use them.
 | `mb/showinfo` | supported | 10 | 94 |
 | `mb/showerror` | supported | 10 | 91 |
 | `tk/Text` | supported | 10 | 43 |
+| `ttk/Notebook` | supported | 10 | 20 |
 | `ttk/Frame` | supported | 9 | 295 |
 | `ttk/Combobox` | supported | 9 | 39 |
 | `tk/Checkbutton` | supported | 8 | 49 |
@@ -93,26 +93,26 @@ Features sorted by weight, then by how many repos use them.
 
 | repo | stars | verdict |
 |---|---|---|
-| PySimpleGUI/PySimpleGUI | 13821 | will not run in-tab — ttk.Notebook, ttk.Progressbar, ttk.Treeview raises TclError |
-| TomSchimansky/CustomTkinter | 13610 | will not run in-tab — ttk.Notebook, ttk.Progressbar raises TclError |
+| PySimpleGUI/PySimpleGUI | 13821 | will not run in-tab — ttk.Progressbar, ttk.Treeview raises TclError |
+| TomSchimansky/CustomTkinter | 13611 | will not run in-tab — ttk.Progressbar raises TclError |
 | ParthJadhav/Tkinter-Designer | 10249 | opens, but 6 feature(s) silently degrade |
 | kangvcar/InfoSpider | 8274 | opens, but 1 feature(s) silently degrade |
-| pythonguis/pythonguis-examples | 4653 | will not run in-tab — ttk.Notebook raises TclError |
-| ilius/pyglossary | 2715 | will not run in-tab — ttk.Notebook, ttk.Treeview raises TclError |
+| pythonguis/pythonguis-examples | 4653 | opens, but 3 feature(s) silently degrade |
+| ilius/pyglossary | 2715 | will not run in-tab — ttk.Treeview raises TclError |
 | israel-dryer/ttkbootstrap | 2666 | opens, but 6 feature(s) silently degrade |
-| AaronL725/grok-register | 2421 | opens, but 2 feature(s) silently degrade |
-| alejandroautalan/pygubu | 2170 | will not run in-tab — ttk.Notebook, ttk.Panedwindow raises TclError |
+| AaronL725/grok-register | 2422 | opens, but 2 feature(s) silently degrade |
+| alejandroautalan/pygubu | 2170 | will not run in-tab — ttk.Panedwindow raises TclError |
 | receyuki/stable-diffusion-prompt-reader | 1343 | opens, but 3 feature(s) silently degrade |
-| Dvlv/Tkinter-By-Example | 1295 | will not run in-tab — ttk.Notebook, ttk.Treeview raises TclError (1 file(s) failed to parse — counted, not guessed) |
+| Dvlv/Tkinter-By-Example | 1295 | will not run in-tab — ttk.Treeview raises TclError (1 file(s) failed to parse — counted, not guessed) |
 | Xiaokang2022/maliang | 1097 | opens, but 5 feature(s) silently degrade |
 | jiesutd/YEDDA | 1075 | will not run in-tab — ttk.Treeview raises TclError |
-| alejandroautalan/pygubu-designer | 1069 | will not run in-tab — ttk.Notebook, ttk.Panedwindow, ttk.Progressbar, ttk.Treeview raises TclError |
+| alejandroautalan/pygubu-designer | 1069 | will not run in-tab — ttk.Panedwindow, ttk.Progressbar, ttk.Treeview raises TclError |
 | TomSchimansky/TkinterMapView | 748 | opens, but 3 feature(s) silently degrade |
 | jark006/FtpServer | 694 | opens, but 4 feature(s) silently degrade |
-| Dadangdut33/Speech-Translate | 663 | will not run in-tab — ttk.Notebook, ttk.Progressbar raises TclError |
-| dmnfarrell/pandastable | 659 | will not run in-tab — ttk.Notebook, ttk.PanedWindow, ttk.Progressbar raises TclError |
+| Dadangdut33/Speech-Translate | 663 | will not run in-tab — ttk.Progressbar raises TclError |
+| dmnfarrell/pandastable | 659 | will not run in-tab — ttk.PanedWindow, ttk.Progressbar raises TclError |
 | Aashishkumar123/Python-GUI-Project | 650 | will not run in-tab — ttk.Progressbar raises TclError |
-| jarvisteach/appJar | 614 | will not run in-tab — ttk.Notebook, ttk.PanedWindow raises TclError (3 file(s) failed to parse — counted, not guessed) |
+| jarvisteach/appJar | 614 | will not run in-tab — ttk.PanedWindow raises TclError (3 file(s) failed to parse — counted, not guessed) |
 
 ## Honest gaps
 

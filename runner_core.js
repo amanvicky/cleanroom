@@ -151,6 +151,10 @@ export const SHELF = [
     what: "a real Flask app served through the page's virtual network — add and delete notes", at: "61ec690" },
   { repo: "https://github.com/amanvicky/fastapi-notes-demo",
     what: "a real FastAPI app driven by the VM's own event loop — no uvicorn, no socket", at: "21da05a" },
+  { repo: "https://github.com/amanvicky/notebook-demo",
+    what: "three tabs, real switching — the audit's #1 blocker now renders", at: "f40eaf2" },
+  { repo: "https://github.com/amanvicky/asking-cli",
+    what: "an input() quiz — the terminal box queues answers for the VM's stdin", at: "b472840" },
 ];
 
 /* README-and-manifest understanding for Python repos: what to install and
@@ -161,6 +165,9 @@ export function parseSetup(files) {
   const textOf = p => byPath.get(p) || "";
   const paths = [...byPath.keys()];
   const out = { installs: [], runCommands: [], notes: [], appKind: "cli" };
+  // does any Python file call input()? The VM has no keyboard of its own —
+  // the stdin lane queues terminal-box lines for those calls.
+  out.usesStdin = paths.some(p => /\.py$/i.test(p) && /\binput\s*\(/.test(textOf(p)));
 
   // requirements files: one requirement per line, comments and -r/-- flags out
   for (const p of paths.filter(p => /requirements[^/]*\.txt$/i.test(p))) {

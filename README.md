@@ -127,9 +127,16 @@ above the terminal so you use them there itself, not through print statements:
 
 - **Python GUI apps (tkinter)** — the runner ships a **virtual tkinter**: a subset of the tkinter
   API rendered as **real HTML widgets** in the page. `run gui_notes.py` opens a window; buttons
-  click, entries type, listboxes fill, canvases draw — callbacks run in the VM while the terminal
-  stays live. Anything outside the subset (menus, file dialogs, images…) is counted and reported,
-  never silently faked.
+  click, entries type, listboxes fill, canvases draw, and **`ttk.Notebook` renders real, switchable
+  tabs** — callbacks run in the VM while the terminal stays live. What the subset carries is not
+  guesswork: [docs/tkinter-coverage.md](docs/tkinter-coverage.md) audits the 20 most-starred tkinter
+  repos on GitHub and grades every API they use by what the virtual screen does with it — the
+  sprint backlog is that table, not intuition. Anything outside the subset (file dialogs, images,
+  `bind()`…) is counted and reported, never silently faked.
+- **CLI apps that ask questions (`input()`)** — the terminal box becomes the app's stdin: type each
+  answer on its own line (the runner sees the `input()` calls and tells you), then run the entry
+  file and the VM feeds those lines to `input()` exactly like a real keyboard. If the queue runs
+  dry you get an honest `EOFError` explaining the lane — not a hang.
 - **Static web apps (root `index.html`)** — type **`preview`**: the page and its scripts/styles are
   inlined into a **sandboxed frame with no origin, no storage, no network**. It runs; nothing
   escapes.
@@ -281,11 +288,14 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 | CPU / memory limits | **not enforced** (`resource` limits are posix-only) | — |
 
 - The browser VM runs **pure-Python** code and Pyodide's wheel catalog; compiled extensions that
-  aren't in that catalog can't load, `input()` isn't wired up, and an infinite loop freezes the
-  tab (refresh recovers; nothing was saved anyway). Freeze/resume is a this-PC feature.
-- The **virtual tkinter is a subset**. Menus, file dialogs, images, colored text tags and a few
-  layout details don't render; every skipped feature is counted and named in the terminal.
-  A real tkinter needs Tcl/Tk — for the real window, run the repo in "this PC" mode or the CLI.
+  aren't in that catalog can't load, and an infinite loop freezes the tab (refresh recovers;
+  nothing was saved anyway). Freeze/resume is a this-PC feature. `input()` works through the
+  **stdin lane**: lines you queue in the terminal box before running — not interactive typing,
+  because sync code freezes the page it runs on.
+- The **virtual tkinter is a subset**. File dialogs, images, `bind()`, colored text tags and a
+  few layout details don't render; every skipped feature is counted and named in the terminal,
+  and [docs/tkinter-coverage.md](docs/tkinter-coverage.md) says which of them real repos actually
+  hit. A real tkinter needs Tcl/Tk — for the real window, run the repo in "this PC" mode or the CLI.
 - In this-PC web-app mode, **the app holds a real port open on your machine** — that's a server
   doing its job, and cleanroom's network guard covers Python children only. The sandbox still
   scrubs your secrets from the app's environment, and Stop + wipe still kill and erase everything;
@@ -297,10 +307,12 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-42 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+61 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
 the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
-and wipes — no mocks. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
-JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations and the shelf's shape.
+and wipes — no mocks. The tkinter audit's scanner is tested against every import style real repos
+use, plus a known-truth check: it must predict "no gaps" for the demo fixture that is verified
+running in-tab. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
+JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations, the stdin-lane detection and the shelf's shape.
 
 ```bash
 python -m pytest tests/ -q
