@@ -889,6 +889,103 @@ class Notebook(_Widget):
             gui.notebook(self._id, "forget", _json.dumps({"index": idx}))
 
 
+class Progressbar(_Widget):
+    """ttk.Progressbar — the audit's top blocker (6 of 20 top-starred tkinter
+    repos). start()/step()/stop() work the way the real widget does: start()
+    schedules a repeating after() timer that calls step() every interval.
+    The wrap rule is measured against real Tk 9.0, not guessed: determinate
+    mode WRAPS at maximum and keeps cycling forever (0..max, 0..max, … until
+    stop(); a step past the maximum lands on value % maximum), indeterminate
+    mode's stored value climbs without bound while the renderer draws the
+    bounce."""
+
+    _kind = "progress"
+
+    def __init__(self, master=None, cnf=None, **kw):
+        self._running = None    # the pending after() token while started
+        self._interval = 50     # Tk's documented default
+        cnf = dict(cnf or {})
+        for _d, _v in (("maximum", 100), ("mode", "determinate"), ("value", 0)):
+            if _d not in cnf and _d not in kw:
+                cnf[_d] = _v
+        super().__init__(master, cnf, **kw)
+
+    def _set(self, key, value, props):
+        if key == "maximum":
+            self._cnf[key] = _num(value)
+            props["maximum"] = self._cnf[key]
+        elif key == "mode":
+            self._cnf[key] = str(value)
+            props["mode"] = self._cnf[key]
+        elif key == "length":
+            self._cnf[key] = _num(value)
+            props["length"] = self._cnf[key]
+        elif key == "value":
+            if self._var is not None:
+                self._var.set(_num(value))
+            self._cnf[key] = _num(value)
+            props["value"] = self._cnf[key]
+        else:
+            return super()._set(key, value, props)
+
+    def __setitem__(self, key, value):
+        # the idiomatic real-tkinter update: pbar["value"] += 10
+        self.config(**{key: value})
+
+    def _bind_var(self, var, props):
+        super()._bind_var(var, props)
+        self._cnf["value"] = _num(var.get())
+        props["value"] = self._cnf["value"]
+
+    def _var_updated(self, value):
+        self._cnf["value"] = _num(value)
+        gui.config(self._id, _json.dumps({"value": _num(value)}))
+
+    def _master_root(self):
+        top = self.winfo_toplevel()
+        return top if hasattr(top, "after") else _root
+
+    def start(self, interval=None):
+        if interval is not None:
+            self._interval = int(interval)
+        if self._running is not None:
+            return                      # real Tk does not double-schedule
+        root = self._master_root()
+        if root is None or not hasattr(root, "after"):
+            _unsupported("Progressbar.start() (no Tk window to schedule on)")
+            return
+        if str(self._cnf.get("mode")) == "indeterminate":
+            gui.config(self._id, _json.dumps({"running": 1}))
+        self._running = root.after(self._interval, self._auto)
+
+    def _auto(self):
+        self._running = None
+        self.step()
+        root = self._master_root()
+        if root is not None and hasattr(root, "after"):
+            self._running = root.after(self._interval, self._auto)
+
+    def step(self, amount=None):
+        amount = 1.0 if amount is None else _num(amount)
+        maximum = _num(self._cnf.get("maximum", 100)) or 1.0
+        value = _num(self._cnf.get("value", 0)) + amount
+        if str(self._cnf.get("mode")) == "determinate" and value > maximum:
+            value = value % maximum     # measured on Tk 9.0: cycle, never stop
+        self._cnf["value"] = value
+        if self._var is not None:
+            self._var.set(value)
+        gui.config(self._id, _json.dumps({"value": value}))
+
+    def stop(self):
+        if self._running is not None:
+            root = self._master_root()
+            if root is not None and hasattr(root, "after_cancel"):
+                root.after_cancel(self._running)
+            self._running = None
+        if str(self._cnf.get("mode")) == "indeterminate":
+            gui.config(self._id, _json.dumps({"running": 0}))
+
+
 class Menu(_Widget):
     _kind = "menu"
 
@@ -950,7 +1047,7 @@ def _install_submodules(mod):
         Frame=Frame, Label=Label, Button=Button, Entry=Entry,
         Checkbutton=Checkbutton, Radiobutton=Radiobutton, Scale=Scale,
         Combobox=Entry, Separator=Frame, Sizegrip=Frame,
-        Notebook=Notebook,
+        Notebook=Notebook, Progressbar=Progressbar,
         Style=_t.SimpleNamespace,
         Labelframe=LabelFrame, LabelFrame=LabelFrame,
     )
@@ -977,7 +1074,7 @@ def _install_submodules(mod):
                 " — run the app on a real PC instead: `python cleanroom.py run <repo>`")
         return gone
 
-    for _name in ("Treeview", "Progressbar", "Panedwindow", "PanedWindow"):
+    for _name in ("Treeview", "Panedwindow", "PanedWindow"):
         setattr(ttk, _name, _not_available("ttk." + _name))
     ttk.Scrollbar = Scrollbar
     ttk.Spinbox = Spinbox

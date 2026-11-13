@@ -127,12 +127,15 @@ above the terminal so you use them there itself, not through print statements:
 
 - **Python GUI apps (tkinter)** — the runner ships a **virtual tkinter**: a subset of the tkinter
   API rendered as **real HTML widgets** in the page. `run gui_notes.py` opens a window; buttons
-  click, entries type, listboxes fill, canvases draw, and **`ttk.Notebook` renders real, switchable
-  tabs** — callbacks run in the VM while the terminal stays live. What the subset carries is not
-  guesswork: [docs/tkinter-coverage.md](docs/tkinter-coverage.md) audits the 20 most-starred tkinter
-  repos on GitHub and grades every API they use by what the virtual screen does with it — the
-  sprint backlog is that table, not intuition. Anything outside the subset (file dialogs, images,
-  `bind()`…) is counted and reported, never silently faked.
+  click, entries type, listboxes fill, canvases draw, **`ttk.Notebook` renders real, switchable
+  tabs**, and **`ttk.Progressbar` moves for real** — `step()` wraps at maximum exactly like real
+  Tk 9.0 (measured, not guessed), `start()/stop()` run on the VM's `after()` timers, indeterminate
+  bars bounce. Callbacks run in the VM while the terminal stays live. What the subset carries is
+  not guesswork: [docs/tkinter-coverage.md](docs/tkinter-coverage.md) audits the 20 most-starred
+  tkinter repos on GitHub and grades every API they use by what the virtual screen does with it —
+  the sprint backlog is that table, not intuition (it named Notebook, then Progressbar; today it
+  names `ttk.Treeview`). Anything outside the subset (file dialogs, images, `bind()`…) is counted
+  and reported, never silently faked.
 - **CLI apps that ask questions (`input()`)** — the terminal box becomes the app's stdin: type each
   answer on its own line (the runner sees the `input()` calls and tells you), then run the entry
   file and the VM feeds those lines to `input()` exactly like a real keyboard. If the queue runs
@@ -307,11 +310,13 @@ cleanroom> cleanroom forget experiment-1   # or: cleanroom.py forget — and sta
 
 ## Testing
 
-61 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
+74 tests, all real: the sandbox tests spawn actual child processes on actual temp dirs and assert
 the scrub, the wipe, the timeout, the network guard, and that a served web app really serves, stops
 and wipes — no mocks. The tkinter audit's scanner is tested against every import style real repos
 use, plus a known-truth check: it must predict "no gaps" for the demo fixture that is verified
-running in-tab. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
+running in-tab. The new widget's state machine has its own unit tests — the wrap rule the tests
+pin is the one measured against real Tk 9.0, and the JS bridge is a recorder, so the timer math
+runs under CPython. CI runs the suite on **Ubuntu and Windows** (Python 3.10 + 3.12), the
 JS↔Python parity gate, and the node runner-check for the GUI/server detection helpers, the report card's rule explanations, the stdin-lane detection and the shelf's shape.
 
 ```bash

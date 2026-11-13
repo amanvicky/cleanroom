@@ -205,3 +205,12 @@ def test_notebook_graded_supported_after_the_first_sprint():
     assert ("ttk", "Notebook") not in tk_audit.WEIGHTS
     assert tk_audit._weight_of(("ttk", "Notebook")) == "supported"
     assert tk_audit._weight_of(("ttk", "Treeview")) == "blocking"  # still a wall
+
+
+def test_progressbar_graded_supported_after_the_second_sprint():
+    # the 2026-11-14 re-run ranked ttk.Progressbar the top blocker (6 of 20
+    # repos); the sprint shipped it (start/step/stop with the wrap rule
+    # measured against real Tk 9.0), so it must grade supported now
+    assert ("ttk", "Progressbar") not in tk_audit.WEIGHTS
+    assert tk_audit._weight_of(("ttk", "Progressbar")) == "supported"
+    assert tk_audit._weight_of(("ttk", "Treeview")) == "blocking"  # still a wall

@@ -377,6 +377,46 @@ h2 {
 .tkpanel { display: flex; flex-direction: column; padding: 8px; min-width: 0; flex: 1; gap: 4px; }
 .tkpanel-off { display: none; }
 .tk-disabled { opacity: 0.5; }
+.tkprogress { display: flex; align-items: center; }
+.tkprogress-track {
+  width: 160px;
+  height: 12px;
+  background: #0d141d;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.tkprogress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.05s linear;
+}
+.tkprogress-bounce { width: 34%; }
+.tkprogress-run.tkprogress-bounce { animation: tkbounce 1.1s linear infinite; }
+.tkprogress-vert .tkprogress-track {
+  width: 12px;
+  height: 120px;
+  align-self: center;
+}
+.tkprogress-vert .tkprogress-fill {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 0%;
+  transition: height 0.05s linear;
+}
+.tkprogress-vert .tkprogress-bounce { width: 100%; height: 34%; }
+.tkprogress-vert .tkprogress-run.tkprogress-bounce { animation: tkbounce-vert 1.1s linear infinite; }
+@keyframes tkbounce {
+  from { margin-left: -34%; }
+  to { margin-left: 100%; }
+}
+@keyframes tkbounce-vert {
+  from { margin-top: -34%; }
+  to { margin-top: 100%; }
+}
 
 .webbar {
   color: var(--dim);

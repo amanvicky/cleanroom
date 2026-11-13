@@ -60,12 +60,12 @@ IMAGE_OPTIONS = {"image", "bitmap", "compound"}
 ROOT_NAMES = {"tkinter", "tk"}  # bare aliases that mean the tkinter root
 
 # what the virtual tkinter does with each of these today (tkinter_shim.py).
-# ttk.Notebook left this table after the first audit sprint (2026-11-14): it
-# renders as a real tab bar now, so it grades "supported" automatically.
+# ttk.Notebook left this table after the first audit sprint (2026-11-14) and
+# ttk.Progressbar after the second (2026-11-14): both render for real now, so
+# they grade "supported" automatically.
 WEIGHTS = {
     ("ttk", "Treeview"): "blocking",
-    ("ttk", "Progressbar"): "blocking", ("ttk", "Panedwindow"): "blocking",
-    ("ttk", "PanedWindow"): "blocking",
+    ("ttk", "Panedwindow"): "blocking", ("ttk", "PanedWindow"): "blocking",
     ("mb", "askyesno"): "behavior", ("mb", "askokcancel"): "behavior",
     ("mb", "askretrycancel"): "behavior", ("mb", "askquestion"): "behavior",
     ("sd", "askstring"): "behavior", ("sd", "askinteger"): "behavior",

@@ -20,7 +20,7 @@ import { scanTree } from "./cleanroom.js";
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 // keep in step with bridge.py VERSION — printed on VM boot so a stale cache
 // is always visible in the terminal
-const RUNNER_VERSION = "0.1.8";
+const RUNNER_VERSION = "0.1.9";
 
 let pyodide = null;
 let vmLoading = null;
@@ -742,6 +742,17 @@ function buildEl(rec) {
       el.appendChild(rec.panels);
       break;
     }
+    case "progress": {
+      // ttk.Progressbar — a track with a fill; determinate mode fills by
+      // value, indeterminate mode bounces while `running` is set (the bar
+      // cycles forever until stop(), same as real tkinter)
+      el = div("tkprogress");
+      rec.track = div("tkprogress-track");
+      rec.fill = div("tkprogress-fill");
+      rec.track.appendChild(rec.fill);
+      el.appendChild(rec.track);
+      break;
+    }
     default: el = div("tkframe");
   }
   return el;
@@ -793,6 +804,19 @@ function applyProps(rec) {
     else el.style.height = p.height + "px";
   }
   if (p.wrap !== undefined && rec.kind === "text") el.wrap = p.wrap === "none" ? "off" : "soft";
+  if (rec.kind === "progress") {
+    const max = Number(p.maximum) > 0 ? Number(p.maximum) : 100;
+    if (p.mode === "indeterminate") {
+      rec.fill.classList.add("tkprogress-bounce");
+      rec.fill.classList.toggle("tkprogress-run", !!p.running);
+    } else {
+      rec.fill.classList.remove("tkprogress-bounce", "tkprogress-run");
+      const frac = Math.min(1, Math.max(0, Number(p.value) / max));
+      rec.fill.style.width = (frac * 100).toFixed(1) + "%";
+    }
+    if (p.length) rec.track.style.width = p.length + "px";
+    if (p.orient === "vertical") el.classList.add("tkprogress-vert");
+  }
 }
 
 function scheduleRender() {
