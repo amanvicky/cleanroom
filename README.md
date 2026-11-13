@@ -92,10 +92,15 @@ setup: 1 installed
 
 ![Flask app served through the page's virtual network, used inside the app screen](docs/cleanroom-wsgi.png)
 
-Honest edges of the virtual network: it speaks WSGI (Flask works; FastAPI/ASGI would need
-uvicorn, which cannot bind in a tab), database-backed apps are limited by what the VM can load,
-and dev hot-reload doesn't flow through it. The CLI and this-PC mode remain the full-fidelity
-paths.
+FastAPI is covered too — and it needs no server at all: an ASGI app is an async callable, so the
+VM's own event loop drives it directly. The one honest pairing constraint: fastapi's `pydantic`
+dependency has a compiled core, which the VM takes from its own catalog (a WebAssembly build of
+pydantic 2.7.0), and the pinned fastapi release is the one that pairs with it. Endpoints must be
+`async def` — the tab has no worker threads to schedule sync endpoints on.
+
+Honest edges of the virtual network: database-backed apps are limited by what the VM can load,
+sync endpoints need a real machine, and dev hot-reload doesn't flow through it. The CLI and
+this-PC mode remain the full-fidelity paths.
 
 ## Any repo, understood and run on your own PC — free
 

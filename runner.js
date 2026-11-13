@@ -1165,6 +1165,12 @@ function guiApiImpl() {
 }
 window.__cleanroomGui = guiApiImpl();
 // small debug hook for verification scripts: call the mounted WSGI app directly
+window.__crLoadPkg = (n) => pyodide.loadPackage(n);
+window.__crAsgiTest = async (payload) => {
+  if (!pyodide || appTransport !== "asgi") throw new Error("no ASGI app mounted");
+  return JSON.parse(await pyodide.runPythonAsync(
+    "__cr_asgi_entry(" + JSON.stringify(JSON.stringify(payload)) + ")"));
+};
 window.__crWsgiTest = async (payload) => {
   if (!pyodide) throw new Error("no VM");
   return JSON.parse(await pyodide.runPythonAsync(
@@ -1348,6 +1354,13 @@ const PIP_RE = /^(flask|django|fastapi|jinja2|werkzeug|click|itsdangerous|markup
 
 function micropipProxy() { return pyodide.pyimport("micropip"); }
 
+// micropip refuses requirements whose wheel is compiled (pydantic-core) —
+// the Pyodide catalog carries compiled builds of these under another name
+const CATALOG_SUBSTITUTES = {
+  "pydantic-core": "pydantic",
+  "pydantic-core-binary": "pydantic",
+};
+
 async function runSetup(setup) {
   line("── setting up (" + setup.installs.length + " requirement" +
        (setup.installs.length === 1 ? "" : "s") + ") — installing into the VM ──", "t-meta");
@@ -1359,6 +1372,28 @@ async function runSetup(setup) {
       await pyodide.loadPackage(name);
       how = "the VM's catalog";
     } catch (e1) { /* not in the catalog — try PyPI wheels */ }
+    if (!how && name.toLowerCase() === "fastapi") {
+      // fastapi needs pydantic, whose core is compiled — but the catalog
+      // carries a WASM build of pydantic 2.7.0, and fastapi 0.111.0 is the
+      // release that pairs with it. the pure deps install from PyPI, the
+      // pinned fastapi skips its own resolution (it would demand a newer
+      // pydantic whose core cannot exist here), and the catalog build of
+      // pydantic lands last.
+      try {
+        await pyodide.loadPackage("micropip");
+        await pyodide.runPythonAsync(
+          "import micropip; await micropip.install("
+          + "['starlette==0.41.3','anyio','typing-extensions==4.16.0','sniffio','idna','annotated-types'])");
+        await pyodide.runPythonAsync(
+          "import micropip; await micropip.install('fastapi==0.111.0', deps=False)");
+        await pyodide.loadPackage("pydantic");
+        await pyodide.runPythonAsync("import fastapi");
+        how = "PyPI wheels + the VM's catalog build of pydantic";
+      } catch (eF) {
+        const parts = String(eF.message || eF).split("\n").filter(Boolean);
+        line("      (fastapi: " + parts.slice(-3).join(" | ") + ")", "t-dim");
+      }
+    }
     if (!how) {
       try {
         await pyodide.loadPackage("micropip");
@@ -1366,8 +1401,24 @@ async function runSetup(setup) {
           "import micropip; await micropip.install(" + JSON.stringify(name) + ")");
         how = "pure-Python wheels from PyPI (via your browser's own fetch)";
       } catch (e2) {
-        const parts = String(e2.message || e2).split("\n").filter(Boolean);
-        line("      (" + name + ": " + parts.slice(-3).join(" | ") + ")", "t-dim");
+        const msg = String(e2.message || e2);
+        // micropip refuses when a requirement has no pure wheel but the
+        // Pyodide catalog carries a compiled build of it (pydantic-core →
+        // pydantic): load the catalog build, then retry once
+        const blocked = /Can't find a pure Python 3 wheel for '([A-Za-z0-9_.-]+?)==/.exec(msg);
+        const alt = blocked && CATALOG_SUBSTITUTES[blocked[1].toLowerCase()];
+        if (alt) {
+          try {
+            await pyodide.loadPackage(alt);
+            await pyodide.runPythonAsync(
+              "import micropip; await micropip.install(" + JSON.stringify(name) + ")");
+            how = "PyPI wheels + the VM's catalog build of " + alt;
+          } catch (e3) { /* fall through to the honest refusal */ }
+        }
+        if (!how) {
+          const parts = msg.split("\n").filter(Boolean);
+          line("      (" + name + ": " + parts.slice(-3).join(" | ") + ")", "t-dim");
+        }
       }
     }
     if (how) {
@@ -1432,6 +1483,49 @@ def __cr_wsgi_entry(payload):
     return _json.dumps({"code": code, "headers": state["headers"],
                         "bodyB64": _b64.b64encode(data).decode()})
 `;
+
+/* ASGI needs no server either: the app is an async callable and this tab's
+   VM already runs an event loop. Same virtual network as the WSGI path. */
+const ASGI_PY_BOOT = (mod) => `
+import anyio.to_thread, anyio.from_thread
+import importlib as _imp
+_m = _imp.import_module(${JSON.stringify(mod)})
+_a = getattr(_m, "app", None) or getattr(_m, "application", None)
+if _a is None or hasattr(_a, "wsgi_app") and not hasattr(_a, "client"):
+    raise RuntimeError("no ASGI app object found in module " + ${JSON.stringify(mod)})
+__cr_asgi_app = _a
+
+async def __cr_asgi_entry(payload):
+    import json as _json, base64 as _b64
+    d = _json.loads(payload)
+    body = _b64.b64decode(d.get("bodyB64", ""))
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": d["method"], "scheme": "http",
+        "path": d["path"], "raw_path": d["path"].encode(),
+        "query_string": d.get("query", "").encode(), "root_path": "",
+        "headers": [[k.lower().encode(), str(v).encode()]
+                    for k, v in (d.get("headers") or {}).items()],
+        "client": ("127.0.0.1", 0), "server": ("cleanroom.local", 80),
+    }
+    state = {"body": b"", "status": 500, "headers": []}
+    async def _receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+    async def _send(msg):
+        if msg["type"] == "http.response.start":
+            state["status"] = msg["status"]
+            # ASGI headers are byte pairs — decode them, str() would embed b''
+            state["headers"] = [[a.decode() if isinstance(a, bytes) else str(a),
+                                 b.decode() if isinstance(b, bytes) else str(b)]
+                                for a, b in msg.get("headers", [])]
+        elif msg["type"] == "http.response.body":
+            state["body"] += msg.get("body", b"")
+    await __cr_asgi_app(scope, _receive, _send)
+    return _json.dumps({"code": state["status"], "headers": state["headers"],
+                        "bodyB64": _b64.b64encode(state["body"]).decode()})
+`;
+
+let appTransport = null;   // "wsgi" | "asgi" — which virtual network is mounted
 
 const WSGI_SHIM_BODY = `
 var __cr = (window.__cr = window.__cr || { pending: {} });
@@ -1535,7 +1629,7 @@ function wsgiShellHtml() {
 window.addEventListener("message", async ev => {
   const d = ev.data || {};
   if (d.crWsgi !== "request") return;
-  if (!pyodide || mode !== "vm") return;
+  if (!pyodide || mode !== "vm" || !appTransport) return;
   try {
     const payload = {
       method: d.payload.method,
@@ -1544,8 +1638,9 @@ window.addEventListener("message", async ev => {
       bodyB64: btoa(unescape(encodeURIComponent(d.payload.body || ""))),
       headers: d.payload.headers || {},
     };
+    const fn = appTransport === "asgi" ? "__cr_asgi_entry" : "__cr_wsgi_entry";
     const resp = await pyodide.runPythonAsync(
-      "__cr_wsgi_entry(" + JSON.stringify(JSON.stringify(payload)) + ")");
+      fn + "(" + JSON.stringify(JSON.stringify(payload)) + ")");
     ev.source.postMessage({ crWsgi: "response", id: d.id, resp: JSON.parse(resp) }, "*");
   } catch (e) {
     line("virtual network error: " + (e.message || e), "t-err");
@@ -1565,12 +1660,15 @@ async function vmServeWSGI() {
     return;
   }
   line("── mounting the WSGI app inside the VM — its only network is this page ──", "t-meta");
+  await pyodide.loadPackage("ssl");
+  await pyodide.loadPackage("anyio");
   try {
     await pyodide.runPythonAsync(WSGI_PY_BOOT(mod));
   } catch (e) {
     line("could not mount the WSGI app: " + (e.message || e).split("\n")[0], "t-err");
     return;
   }
+  appTransport = "wsgi";
   webFrame.removeAttribute("src");
   webFrame.srcdoc = wsgiShellHtml();
   webWrap.classList.remove("hidden");
@@ -1578,6 +1676,32 @@ async function vmServeWSGI() {
   appTitle.textContent = "app screen — " + mod + " (WSGI in the VM · virtual network)";
   line("the app is served by the page: browser → VM → browser. no sockets, "
        + "nothing listens on your machine, nothing escapes the tab. wipe ends it.", "t-dim");
+}
+
+async function vmServeASGI() {
+  const mod = ["app", "main", "main_asgi", "server", "run"].find(
+    m => vmFiles.some(f => f[0] === m + ".py"));
+  if (!mod) {
+    line("no obvious ASGI module (app.py / main.py) to mount", "t-err");
+    return;
+  }
+  line("── mounting the ASGI app inside the VM — its only network is this page ──", "t-meta");
+  await pyodide.loadPackage("ssl");
+  try {
+    await pyodide.runPythonAsync(ASGI_PY_BOOT(mod));
+  } catch (e) {
+    const parts = String(e.message || e).split("\n").filter(Boolean);
+    line("could not mount the ASGI app: " + parts.slice(-3).join(" | "), "t-err");
+    return;
+  }
+  appTransport = "asgi";
+  webFrame.removeAttribute("src");
+  webFrame.srcdoc = wsgiShellHtml();
+  webWrap.classList.remove("hidden");
+  appCard.classList.remove("hidden");
+  appTitle.textContent = "app screen — " + mod + " (ASGI in the VM · virtual network)";
+  line("the FastAPI app is served by the page: browser → VM → browser. no uvicorn, "
+       + "no sockets, nothing listens on your machine, nothing escapes the tab.", "t-dim");
 }
 
 function suggestCommands(files) {
@@ -1668,8 +1792,9 @@ async function vmLoadRepo(raw) {
     line("server app detected (Flask/Django) — in the tab it runs behind a virtual "
          + "network: the page asks, the VM answers, nothing listens anywhere.", "t-dim");
   } else if (setup.appKind === "asgi") {
-    line("FastAPI is ASGI — the in-tab transport serves WSGI apps; this one would "
-         + "need uvicorn, which cannot bind in a tab. honest miss for now.", "t-dim");
+    cards.push({ label: "serve the FastAPI app in-tab (virtual network)", cmd: "serve", kind: "run" });
+    line("FastAPI app detected — ASGI needs no server: the VM's own event loop drives "
+         + "the app, and this page is its network. no uvicorn, no sockets.", "t-dim");
   }
   // beyond the tab: name the reasons — the free hand-off is the operator's PC
   const hasRunnablePy = files.some(([p]) => /\.py$/i.test(p));
@@ -1933,9 +2058,15 @@ async function execLine(raw) {
     const okAll = await runSetup(parseSetup(new Map(vmFiles)));
     const st = parseSetup(new Map(vmFiles));
     if (okAll && st.appKind === "wsgi") await vmServeWSGI();
+    if (okAll && st.appKind === "asgi") await vmServeASGI();
     return;
   }
-  if (cmd === "serve") { await vmServeWSGI(); return; }
+  if (cmd === "serve") {
+    const st = parseSetup(new Map(vmFiles));
+    if (st.appKind === "asgi") await vmServeASGI();
+    else await vmServeWSGI();
+    return;
+  }
   if (cmd === "screen") {
     if (W.size) { appCard.classList.remove("hidden"); }
     else line("no window yet — run the repo's GUI entry (e.g. 'run gui_notes.py')", "t-dim");

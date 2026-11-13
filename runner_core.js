@@ -149,6 +149,8 @@ export const SHELF = [
     what: "inspect and validate a chat JSONL dataset before fine-tuning", at: "7dc4090" },
   { repo: "https://github.com/amanvicky/flask-notes-demo",
     what: "a real Flask app served through the page's virtual network — add and delete notes", at: "61ec690" },
+  { repo: "https://github.com/amanvicky/fastapi-notes-demo",
+    what: "a real FastAPI app driven by the VM's own event loop — no uvicorn, no socket", at: "21da05a" },
 ];
 
 /* README-and-manifest understanding for Python repos: what to install and
@@ -237,9 +239,6 @@ const NATIVE_ONLY = new Set([
 
 export function fullMachineReasons(setup, sig, hasPythonRunnable) {
   const reasons = [];
-  if (setup.appKind === "asgi") {
-    reasons.push("ASGI server app — uvicorn would need to bind a socket, which a tab has");
-  }
   const native = setup.installs.filter(n => NATIVE_ONLY.has(n));
   if (native.length) {
     reasons.push("native-binary dependencies that cannot exist in WebAssembly: " + native.join(", "));

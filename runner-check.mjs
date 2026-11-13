@@ -149,11 +149,9 @@ const fmSetup = parseSetup(new Map([
   ["requirements.txt", "fastapi\nuvicorn\nfaster-whisper\nav\nsounddevice\nnumpy\n"],
 ]));
 const fmReasons = fullMachineReasons(fmSetup, null, true);
-ok(fmReasons.length === 2 &&
-   fmReasons[0].startsWith("ASGI server app") &&
-   fmReasons[1].startsWith("native-binary dependencies"),
-   "fullMachineReasons: ASGI + native deps named (got: " + fmReasons.join(" / ") + ")");
-ok(fmReasons[1].includes("faster-whisper") && fmReasons[1].includes("sounddevice"),
+ok(fmReasons.length === 1 && fmReasons[0].startsWith("native-binary dependencies"),
+   "fullMachineReasons: native deps named, ASGI no longer a reason (got: " + fmReasons.join(" / ") + ")");
+ok(fmReasons[0].includes("faster-whisper") && fmReasons[0].includes("sounddevice"),
    "fullMachineReasons lists the native packages by name");
 const fmNone = fullMachineReasons(parseSetup(new Map([["requirements.txt", "flask\n"]])), null, true);
 ok(fmNone.length === 0, "fullMachineReasons: a WSGI repo with pure deps stays in-tab");
