@@ -417,6 +417,50 @@ h2 {
   from { margin-top: -34%; }
   to { margin-top: 100%; }
 }
+.tktree { display: flex; min-width: 0; }
+.tktree-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d141d;
+  width: 100%;
+  max-width: 100%;
+}
+.tktree-table {
+  border-collapse: collapse;
+  width: 100%;
+  font: 12.5px "Cascadia Mono", Consolas, monospace;
+}
+.tktree-th {
+  position: sticky;
+  top: 0;
+  background: #101825;
+  color: var(--dim);
+  text-align: left;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.tktree-cell {
+  padding: 4px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+.tktree-row { cursor: pointer; }
+.tktree-row:hover { background: #131c2b; }
+.tktree-on, .tktree-row.tktree-on:hover { background: #16304f; color: #e8eef4; }
+.tktree-toggle {
+  display: inline-block;
+  width: 14px;
+  color: var(--dim);
+  user-select: none;
+  cursor: pointer;
+  text-align: center;
+}
+.tktree-toggle-blank { cursor: default; }
 
 .webbar {
   color: var(--dim);

@@ -40,6 +40,7 @@ CONST_NAMES = [
     "FLAT", "GROOVE", "RIDGE", "RAISED", "SUNKEN", "SOLID",
     "NORMAL", "DISABLED", "ACTIVE", "READONLY",
     "SINGLE", "BROWSE", "MULTIPLE", "EXTENDED", "WORD", "CHAR", "ALL",
+    "YES", "NO",
 ]
 
 
@@ -95,6 +96,32 @@ def _num(v):
         return int(v) if float(v) == int(float(v)) else float(v)
     except (TypeError, ValueError):
         return 0
+
+
+def _tcl_list(s):
+    """Simple Tcl list split: whitespace-separated, braces group one element —
+    what `values="a b {c d}"` means in real Tk."""
+    out, cur, depth = [], "", 0
+    for ch in str(s):
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                continue
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                out.append(cur)
+                cur = ""
+                continue
+        if ch == " " and depth == 0:
+            if cur:
+                out.append(cur)
+                cur = ""
+        else:
+            cur += ch
+    if cur:
+        out.append(cur)
+    return out
 
 
 def _font_css(value):
@@ -986,6 +1013,385 @@ class Progressbar(_Widget):
             gui.config(self._id, _json.dumps({"running": 0}))
 
 
+class Treeview(_Widget):
+    """ttk.Treeview — the audit's top blocker (5 of 20 top-starred tkinter
+    repos), the third widget sprint. The surface here is the one the corpus
+    actually calls (dumped call-site by call-site before building):
+    insert/heading/column/selection/item/delete/get_children in both shapes
+    the repos use — `show="headings"` tables and default tree mode with the
+    #0 outline column, parent= hierarchies and open=. Clicking a row updates
+    the widget's selection state (so selection()/item() answer real data);
+    <<TreeviewSelect>> callbacks stay outside the subset — bind() is counted,
+    as the audit's own table says."""
+
+    _kind = "tree"
+
+    def __init__(self, master=None, cnf=None, **kw):
+        self._items = {}          # iid -> {"text", "values", "tags", "open"}
+        self._kids = {"": []}     # parent iid -> ordered child iids ("" = top level)
+        self._up = {}             # iid -> parent iid
+        self._selection = []
+        self._focus = ""
+        self._headings = {}
+        self._colconf = {}
+        self._seq = 0
+        cnf = dict(cnf or {})
+        cnf.setdefault("columns", "")
+        cnf.setdefault("show", "tree headings")
+        super().__init__(master, cnf, **kw)
+
+    # -- options -------------------------------------------------------------
+
+    def _set(self, key, value, props):
+        if key == "columns":
+            cols = value.split() if isinstance(value, str) else [str(c) for c in value]
+            self._cnf[key] = cols
+            props["columns"] = cols
+        elif key == "show":
+            self._cnf[key] = str(value)
+            props["show"] = self._cnf[key]
+        elif key == "height":
+            self._cnf[key] = _num(value)
+            props["height"] = self._cnf[key]
+        elif key == "selectmode":
+            self._cnf[key] = str(value)
+            props["selectmode"] = self._cnf[key]
+        else:
+            return super()._set(key, value, props)
+
+    # -- the model -> renderer sync ------------------------------------------
+
+    def _rows(self):
+        """Visible rows in display order: depth-first from the top level,
+        children of a closed item are hidden (what real Tk draws)."""
+        out = []
+
+        def walk(pid, depth):
+            for iid in self._kids.get(pid, []):
+                it = self._items[iid]
+                out.append({
+                    "iid": iid, "depth": depth, "text": it["text"],
+                    "values": it["values"], "open": 1 if it["open"] else 0,
+                    "kids": 1 if self._kids.get(iid) else 0,
+                    "sel": 1 if iid in self._selection else 0,
+                })
+                if it["open"]:
+                    walk(iid, depth + 1)
+
+        walk("", 0)
+        return out
+
+    def _sync(self):
+        cols = self._cnf.get("columns") or []
+        show = str(self._cnf.get("show", "tree headings"))
+        payload = {
+            "columns": cols,
+            "showTree": "tree" in show,
+            "headings": self._headings,
+            "cols": {c: self._colconf.get(c, {}) for c in cols},
+            "rows": self._rows(),
+        }
+        gui.tree(self._id, "rows", _json.dumps(payload))
+
+    def _one(self, iid):
+        """Dvlv-style calls pass the whole selection() tuple to item()/see();
+        real tkinter stringifies a 1-tuple to its single element."""
+        if isinstance(iid, (list, tuple)):
+            if len(iid) != 1:
+                raise TclError("expected a single item id, got %d" % len(iid))
+            iid = iid[0]
+        return iid
+
+    # -- items ---------------------------------------------------------------
+
+    def insert(self, parent="", index="end", iid=None, **kw):
+        parent = self._one(parent)
+        if parent != "" and parent not in self._items:
+            raise TclError("item %r does not exist" % (parent,))
+        if iid is None:
+            self._seq += 1
+            iid = "I%03d" % self._seq
+        else:
+            iid = self._one(iid)
+            if iid in self._items:
+                raise TclError("item %r already exists" % (iid,))
+        values = kw.get("values")
+        if values is None:
+            values = []
+        elif isinstance(values, str):
+            values = _tcl_list(values)
+        else:
+            values = [str(v) for v in values]
+        self._items[iid] = {
+            "text": str(kw.get("text", "")),
+            "values": values,
+            "tags": [str(t) for t in (kw.get("tags") or ())],
+            "open": bool(kw.get("open", False)),
+            "image": str(kw.get("image", "")),
+        }
+        if kw.get("image"):
+            _unsupported("Treeview images")
+        self._up[iid] = parent
+        siblings = self._kids.setdefault(parent, [])
+        if index in ("end", END) or index is None:
+            try:
+                at = max(0, min(int(index), len(siblings)))
+            except (TypeError, ValueError):
+                at = len(siblings)
+            siblings.insert(at, iid)
+        self._sync()
+        return iid
+
+    def delete(self, *iids):
+        def drop(iid):
+            for child in self._kids.pop(iid, []):
+                drop(child)
+            parent = self._up.pop(iid, "")
+            siblings = self._kids.get(parent, [])
+            if iid in siblings:
+                siblings.remove(iid)
+            self._items.pop(iid, None)
+            if iid in self._selection:
+                self._selection.remove(iid)
+            if self._focus == iid:
+                self._focus = ""
+
+        for iid in iids:
+            iid = self._one(iid)
+            if iid in self._items:
+                drop(iid)
+        self._sync()
+
+    def detach(self, *iids):
+        for iid in iids:
+            iid = self._one(iid)
+            if iid in self._items:
+                parent = self._up.get(iid, "")
+                siblings = self._kids.get(parent, [])
+                if iid in siblings:
+                    siblings.remove(iid)
+                if iid in self._selection:
+                    self._selection.remove(iid)
+        self._sync()
+
+    def move(self, iid, parent, index):
+        iid = self._one(iid)
+        if iid not in self._items:
+            raise TclError("item %r does not exist" % (iid,))
+        parent = self._one(parent)
+        if parent != "" and parent not in self._items:
+            raise TclError("item %r does not exist" % (parent,))
+        old = self._kids.get(self._up.get(iid, ""), [])
+        if iid in old:
+            old.remove(iid)
+        self._up[iid] = parent
+        siblings = self._kids.setdefault(parent, [])
+        if index in ("end", END):
+            siblings.append(iid)
+        else:
+            try:
+                siblings.insert(max(0, min(int(index), len(siblings))), iid)
+            except (TypeError, ValueError):
+                siblings.append(iid)
+        self._sync()
+
+    def get_children(self, item=""):
+        return tuple(self._kids.get(self._one(item), []))
+
+    def parent(self, iid):
+        return self._up.get(self._one(iid), "")
+
+    def exists(self, iid):
+        try:
+            return self._one(iid) in self._items
+        except TclError:
+            return False
+
+    def index(self, iid):
+        iid = self._one(iid)
+        siblings = self._kids.get(self._up.get(iid, ""), [])
+        if iid not in siblings:
+            raise TclError("item %r is not in the tree" % (iid,))
+        return siblings.index(iid)
+
+    # -- per-item data -------------------------------------------------------
+
+    def item(self, iid, option=None, **kw):
+        iid = self._one(iid)
+        if iid not in self._items:
+            raise TclError("item %r does not exist" % (iid,))
+        it = self._items[iid]
+        if kw:
+            if "text" in kw:
+                it["text"] = str(kw["text"])
+            if "values" in kw:
+                vals = kw["values"]
+                it["values"] = [vals] if isinstance(vals, str) else [str(v) for v in vals]
+            if "open" in kw:
+                it["open"] = bool(kw["open"])
+            if "tags" in kw:
+                it["tags"] = [str(t) for t in (kw["tags"] or ())]
+            if set(kw) - {"text", "values", "open", "tags"}:
+                _unsupported("Treeview.item option(s) " +
+                             ", ".join(sorted(set(kw) - {"text", "values", "open", "tags"})))
+            self._sync()
+            return None
+        if option is not None:
+            if option == "open":
+                return 1 if it["open"] else 0
+            return list(it["values"]) if option == "values" else it.get(option)
+        return {"text": it["text"], "values": list(it["values"]),
+                "open": 1 if it["open"] else 0, "tags": list(it["tags"]),
+                "image": it["image"]}
+
+    # -- columns -------------------------------------------------------------
+
+    def heading(self, col, option=None, **kw):
+        col = str(col)
+        h = self._headings.setdefault(col, {"text": "", "anchor": ""})
+        if kw:
+            if "text" in kw:
+                h["text"] = str(kw["text"])
+            if "anchor" in kw:
+                h["anchor"] = str(kw["anchor"])
+            if set(kw) - {"text", "anchor", "image", "command"}:
+                _unsupported("Treeview.heading option(s) " +
+                             ", ".join(sorted(set(kw) - {"text", "anchor", "image", "command"})))
+            self._sync()
+            return None
+        if option is not None:
+            return h.get(str(option))
+        return dict(h)
+
+    def column(self, col, option=None, **kw):
+        col = str(col)
+        c = self._colconf.setdefault(col, {})
+        if kw:
+            for k in ("width", "minwidth"):
+                if k in kw:
+                    c[k] = _num(kw[k])
+            for k in ("anchor", "stretch", "stretchcol"):
+                if k in kw:
+                    c[k] = str(kw[k])
+            if set(kw) - {"width", "minwidth", "anchor", "stretch"}:
+                _unsupported("Treeview.column option(s) " +
+                             ", ".join(sorted(set(kw) - {"width", "minwidth", "anchor", "stretch"})))
+            self._sync()
+            return None
+        if option is not None:
+            if str(option) == "width":
+                return _num(c.get("width", 200))
+            if str(option) == "minwidth":
+                return _num(c.get("minwidth", 20))
+            if str(option) == "stretch":
+                return c.get("stretch", True)
+            return c.get(str(option))
+        merged = {"width": 200, "minwidth": 20, "stretch": True}
+        merged.update(c)
+        return merged
+
+    # -- selection / focus ---------------------------------------------------
+
+    def selection(self):
+        return tuple(self._selection)
+
+    def selection_set(self, *iids):
+        chosen = []
+        for a in iids:
+            if isinstance(a, (list, tuple)):
+                chosen.extend(a)
+            elif a != "" and a is not None:
+                chosen.append(a)
+        self._selection = [self._one(i) for i in chosen]
+        self._sync()
+
+    def selection_add(self, *iids):
+        self._addsel(iids, add=True)
+
+    def selection_remove(self, *iids):
+        self._addsel(iids, add=False)
+
+    def selection_toggle(self, *iids):
+        for a in iids:
+            for i in (a if isinstance(a, (list, tuple)) else [a]):
+                if i in self._selection:
+                    self._selection.remove(i)
+                else:
+                    self._selection.append(i)
+        self._sync()
+
+    def _addsel(self, iids, add):
+        for a in iids:
+            for i in (a if isinstance(a, (list, tuple)) else [a]):
+                i = self._one(i)
+                if add and i not in self._selection:
+                    self._selection.append(i)
+                elif not add and i in self._selection:
+                    self._selection.remove(i)
+        self._sync()
+
+    def focus(self, iid=None):
+        # real Tk: "A focused item is NOT the same as a selected item" —
+        # focus() records where the cursor sits and touches no selection
+        if iid is None:
+            return self._focus
+        self._focus = self._one(iid)
+        return self._focus
+
+    def see(self, iid):
+        iid = self._one(iid)
+        if iid not in self._items:
+            return
+        # measured on real Tk 9.0: see() opens closed ancestors on the way up
+        p = self._up.get(iid, "")
+        while p:
+            if not self._items[p]["open"]:
+                self._items[p]["open"] = True
+            p = self._up.get(p, "")
+        self._sync()
+        gui.tree(self._id, "see", _json.dumps({"iid": iid}))
+
+    # -- outside the subset, counted not faked -------------------------------
+
+    def tag_configure(self, tag, **kw):
+        _unsupported("Treeview.tag_configure colors/fonts")
+
+    tag_config = tag_configure
+
+    def tag_bind(self, *a, **k):
+        _unsupported("Treeview.tag_bind")
+
+    def bbox(self, *a, **k):
+        _unsupported("Treeview.bbox (cell geometry)")
+
+    def identify(self, *a, **k):
+        _unsupported("Treeview.identify (cell hit-testing)")
+
+    # -- renderer events -----------------------------------------------------
+
+    def _event(self, name, data):
+        if name == "treeselect":
+            iid = data.get("iid")
+            if iid not in self._items or str(self._cnf.get("selectmode")) == "none":
+                return
+            if data.get("toggle"):
+                if iid in self._selection:
+                    self._selection.remove(iid)
+                else:
+                    self._selection.append(iid)
+            elif self._selection != [iid]:
+                self._selection = [iid]
+            self._focus = iid
+            self._sync()
+        elif name == "treetoggle":
+            iid = data.get("iid")
+            if iid in self._items:
+                self._items[iid]["open"] = not self._items[iid]["open"]
+                self._sync()
+        else:
+            super()._event(name, data)
+
+
 class Menu(_Widget):
     _kind = "menu"
 
@@ -1047,7 +1453,7 @@ def _install_submodules(mod):
         Frame=Frame, Label=Label, Button=Button, Entry=Entry,
         Checkbutton=Checkbutton, Radiobutton=Radiobutton, Scale=Scale,
         Combobox=Entry, Separator=Frame, Sizegrip=Frame,
-        Notebook=Notebook, Progressbar=Progressbar,
+        Notebook=Notebook, Progressbar=Progressbar, Treeview=Treeview,
         Style=_t.SimpleNamespace,
         Labelframe=LabelFrame, LabelFrame=LabelFrame,
     )
@@ -1074,7 +1480,7 @@ def _install_submodules(mod):
                 " — run the app on a real PC instead: `python cleanroom.py run <repo>`")
         return gone
 
-    for _name in ("Treeview", "Panedwindow", "PanedWindow"):
+    for _name in ("Panedwindow", "PanedWindow"):
         setattr(ttk, _name, _not_available("ttk." + _name))
     ttk.Scrollbar = Scrollbar
     ttk.Spinbox = Spinbox
@@ -1185,3 +1591,5 @@ EXTENDED = "extended"
 WORD = "word"
 CHAR = "char"
 ALL = "all"
+YES = "yes"
+NO = "no"

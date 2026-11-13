@@ -15,13 +15,12 @@ The sprint takes the highest-weight fixable item — the column decides, not int
 
 ## The table
 
-**What the table says:** the highest-weight blocker is `ttk/Treeview`, used by 5 of 20 repos — that is the sprint item. Next by weight: `ttk/PanedWindow` (2 repos), `ttk/Panedwindow` (2 repos).
+**What the table says:** the highest-weight blocker is `ttk/PanedWindow`, used by 2 of 20 repos — that is the sprint item. Next by weight: `ttk/Panedwindow` (2 repos).
 
 Features sorted by weight, then by how many repos use them.
 
 | feature | weight | repos (of 20) | call sites |
 |---|---|---|---|
-| `ttk/Treeview` | blocking | 5 | 10 |
 | `ttk/PanedWindow` | blocking | 2 | 5 |
 | `ttk/Panedwindow` | blocking | 2 | 2 |
 | `method/bind` | behavior | 19 | 963 |
@@ -80,6 +79,7 @@ Features sorted by weight, then by how many repos use them.
 | `ttk/Progressbar` | supported | 6 | 15 |
 | `tk/Listbox` | supported | 6 | 12 |
 | `tk/Radiobutton` | supported | 5 | 14 |
+| `ttk/Treeview` | supported | 5 | 10 |
 | `tk/Scale` | supported | 5 | 7 |
 | `ttk/Separator` | supported | 4 | 16 |
 | `ttk/Scrollbar` | supported | 4 | 12 |
@@ -93,20 +93,20 @@ Features sorted by weight, then by how many repos use them.
 
 | repo | stars | verdict |
 |---|---|---|
-| PySimpleGUI/PySimpleGUI | 13821 | will not run in-tab — ttk.Treeview raises TclError |
+| PySimpleGUI/PySimpleGUI | 13821 | opens, but 9 feature(s) silently degrade |
 | TomSchimansky/CustomTkinter | 13611 | opens, but 4 feature(s) silently degrade |
 | ParthJadhav/Tkinter-Designer | 10249 | opens, but 6 feature(s) silently degrade |
 | kangvcar/InfoSpider | 8274 | opens, but 1 feature(s) silently degrade |
 | pythonguis/pythonguis-examples | 4653 | opens, but 3 feature(s) silently degrade |
-| ilius/pyglossary | 2715 | will not run in-tab — ttk.Treeview raises TclError |
+| ilius/pyglossary | 2715 | opens, but 6 feature(s) silently degrade |
 | israel-dryer/ttkbootstrap | 2666 | opens, but 6 feature(s) silently degrade |
 | AaronL725/grok-register | 2422 | opens, but 2 feature(s) silently degrade |
 | alejandroautalan/pygubu | 2170 | will not run in-tab — ttk.Panedwindow raises TclError |
 | receyuki/stable-diffusion-prompt-reader | 1343 | opens, but 3 feature(s) silently degrade |
-| Dvlv/Tkinter-By-Example | 1295 | will not run in-tab — ttk.Treeview raises TclError (1 file(s) failed to parse — counted, not guessed) |
+| Dvlv/Tkinter-By-Example | 1295 | opens, but 7 feature(s) silently degrade (1 file(s) failed to parse — counted, not guessed) |
 | Xiaokang2022/maliang | 1097 | opens, but 5 feature(s) silently degrade |
-| jiesutd/YEDDA | 1075 | will not run in-tab — ttk.Treeview raises TclError |
-| alejandroautalan/pygubu-designer | 1069 | will not run in-tab — ttk.Panedwindow, ttk.Treeview raises TclError |
+| jiesutd/YEDDA | 1075 | opens, but 5 feature(s) silently degrade |
+| alejandroautalan/pygubu-designer | 1069 | will not run in-tab — ttk.Panedwindow raises TclError |
 | TomSchimansky/TkinterMapView | 748 | opens, but 3 feature(s) silently degrade |
 | jark006/FtpServer | 694 | opens, but 4 feature(s) silently degrade |
 | Dadangdut33/Speech-Translate | 663 | opens, but 7 feature(s) silently degrade |

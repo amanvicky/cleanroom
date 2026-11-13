@@ -109,7 +109,7 @@ ok(steps2.length === 1 && steps2[0].includes("nothing obvious"), "beforeRunSteps
 
 /* the shelf: every entry names a real repo shape, says what you'll see, and
    carries the commit it was verified against */
-ok(SHELF.length >= 4 && SHELF.length <= 12, "shelf size is curated (" + SHELF.length + " entries)");
+ok(SHELF.length >= 4 && SHELF.length <= 14, "shelf size is curated (" + SHELF.length + " entries)");
 const seen = new Set();
 let shelfOk = true;
 for (const e of SHELF) {

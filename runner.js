@@ -20,7 +20,7 @@ import { scanTree } from "./cleanroom.js";
 const PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 // keep in step with bridge.py VERSION — printed on VM boot so a stale cache
 // is always visible in the terminal
-const RUNNER_VERSION = "0.1.9";
+const RUNNER_VERSION = "0.2.0";
 
 let pyodide = null;
 let vmLoading = null;
@@ -604,6 +604,100 @@ function activateTab(rec, i) {
   Array.from(rec.panels.children).forEach((p, j) => p.classList.toggle("tkpanel-off", j !== i));
 }
 
+/* ttk.Treeview: draw the shim's model as a real table. `show` decides whether
+   the #0 outline column appears; column()/heading() widths, anchors and
+   titles apply; row clicks report back with ctrl/meta as toggle. */
+
+const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) :
+  String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+
+/* Tk's compass anchors — "w" is left, "e" is right, anything else falls
+   through to the literal CSS value */
+const tkAlign = (a) => (a === "w" || a === "sw" || a === "nw") ? "left"
+  : (a === "e" || a === "se" || a === "ne") ? "right"
+  : (a === "center" || a === "c") ? "center" : a;
+
+function renderTree(rec) {
+  const m = rec.treeModel || {};
+  const cols = m.columns || [];
+  const showTree = m.showTree !== false;
+  const wrap = rec.treeWrap;
+  const table = document.createElement("table");
+  table.className = "tktree-table";
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  if (showTree) {
+    const th = document.createElement("th");
+    th.className = "tktree-th tktree-c0";
+    th.textContent = (m.headings && m.headings["#0"] && m.headings["#0"].text) || "";
+    th.style.textAlign = tkAlign((m.headings && m.headings["#0"] && m.headings["#0"].anchor) || "w");
+    hr.appendChild(th);
+  }
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.className = "tktree-th";
+    const h = (m.headings && m.headings[c]) || {};
+    th.textContent = h.text || "";
+    th.style.textAlign = tkAlign(h.anchor || "w");
+    const conf = (m.cols && m.cols[c]) || {};
+    if (conf.width) th.style.width = conf.width + "px";
+    if (conf.minwidth) th.style.minWidth = conf.minwidth + "px";
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of (m.rows || [])) {
+    const tr = document.createElement("tr");
+    tr.className = "tktree-row" + (row.sel ? " tktree-on" : "");
+    tr.dataset.iid = String(row.iid);
+    const cells = [];
+    if (showTree) {
+      const td = document.createElement("td");
+      td.className = "tktree-cell tktree-c0";
+      td.style.paddingLeft = (6 + row.depth * 18) + "px";
+      if (row.kids) {
+        const tog = document.createElement("span");
+        tog.className = "tktree-toggle";
+        tog.textContent = row.open ? "▾" : "▸";
+        tog.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          fire(rec.id, "treetoggle", { iid: row.iid });
+        });
+        td.appendChild(tog);
+      } else {
+        td.appendChild(div("tktree-toggle tktree-toggle-blank"));
+      }
+      const span = document.createElement("span");
+      span.textContent = row.text;
+      td.appendChild(span);
+      tr.appendChild(td);
+    }
+    const vals = row.values || [];
+    for (let i = 0; i < cols.length; i++) {
+      const td = document.createElement("td");
+      td.className = "tktree-cell";
+      td.textContent = vals[i] !== undefined ? String(vals[i]) : "";
+      const conf = (m.cols && m.cols[cols[i]]) || {};
+      td.style.textAlign = tkAlign(conf.anchor || "w");
+      tr.appendChild(td);
+    }
+    tr.addEventListener("click", (ev) => {
+      Array.from(tbody.children).forEach(r => r.classList.remove("tktree-on"));
+      tr.classList.add("tktree-on");
+      fire(rec.id, "treeselect",
+           { iid: row.iid, toggle: !!(ev.ctrlKey || ev.metaKey) });
+    });
+    tr.addEventListener("dblclick", () => fire(rec.id, "treetoggle", { iid: row.iid }));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.replaceChildren(table);
+  const h = Number(rec.props.height) || 10;
+  wrap.style.maxHeight = Math.max(60, h * 26) + "px";
+}
+
 function buildEl(rec) {
   const p = rec.props;
   let el;
@@ -751,6 +845,16 @@ function buildEl(rec) {
       rec.fill = div("tkprogress-fill");
       rec.track.appendChild(rec.fill);
       el.appendChild(rec.track);
+      break;
+    }
+    case "tree": {
+      // ttk.Treeview — a real table: headers when shown, one row per item;
+      // tree mode adds the #0 outline column with depth indentation and
+      // open/close toggles. The Python side owns the model and sends the
+      // full visible rows on every mutation (gui.tree "rows").
+      el = div("tktree");
+      rec.treeWrap = div("tktree-wrap");
+      el.appendChild(rec.treeWrap);
       break;
     }
     default: el = div("tkframe");
@@ -1193,6 +1297,30 @@ function guiApiImpl() {
         return 0;
       }
       return rec.active;
+    },
+    tree(id, op, payloadJson) {
+      // ttk.Treeview ops from the shim. The shim owns the model and sends
+      // the whole visible-ordered rows array on every mutation; the renderer
+      // draws it and reports clicks back ("treeselect", "treetoggle"). Row
+      // clicks carry ctrl/meta as `toggle` — extended-mode multi-select.
+      const rec = W.get(id);
+      if (!rec || !rec.treeWrap) return -1;
+      let p = {};
+      try { p = JSON.parse(payloadJson || "{}"); } catch (e) { /* keep {} */ }
+      if (op === "rows") {
+        rec.treeModel = p;
+        renderTree(rec);
+        return p.rows.length;
+      }
+      if (op === "see") {
+        // scroll the named item into view; it may be hidden if an ancestor
+        // is closed — real Tk scrolls to it either way, drawing nothing for
+        // hidden items is not something a static DOM can do better
+        const row = rec.treeWrap.querySelector('[data-iid="' + cssEscape(String(p.iid)) + '"]');
+        if (row) row.scrollIntoView({ block: "nearest" });
+        return 0;
+      }
+      return -1;
     },
     canvas(id, op, payloadJson) {
       const rec = W.get(id);

@@ -37,10 +37,13 @@ def test_import_as_tk_resolves_widgets_and_options():
 
 def test_from_ttk_import_resolves_to_the_blocking_weight():
     uses = uses_of(
-        "from tkinter.ttk import Treeview, Notebook\n"
-        "t = Treeview(root)\n")
+        "from tkinter.ttk import Treeview, Notebook, PanedWindow\n"
+        "t = Treeview(root)\n"
+        "p = PanedWindow(root)\n")
     assert uses[("ttk", "Treeview")] == 1
-    assert tk_audit.WEIGHTS[("ttk", "Treeview")] == "blocking"
+    assert uses[("ttk", "PanedWindow")] == 1
+    assert tk_audit.WEIGHTS[("ttk", "PanedWindow")] == "blocking"  # the remaining wall
+    assert ("ttk", "Treeview") not in tk_audit.WEIGHTS             # supported since sprint 3
 
 
 def test_import_ttk_without_alias_binds_the_root_not_a_bare_ttk():
@@ -122,18 +125,18 @@ def test_unresolvable_calls_are_not_counted_as_features():
 
 def test_grade_splits_the_three_weights_and_an_other_bucket():
     g = tk_audit.grade({
-        ("ttk", "Treeview"): 3, ("mb", "askyesno"): 2, ("tk", "Scrollbar"): 1,
+        ("ttk", "PanedWindow"): 3, ("mb", "askyesno"): 2, ("tk", "Scrollbar"): 1,
         ("other", "ttk.Mystery"): 4,
     })
-    assert g["blocking"][("ttk", "Treeview")] == 3
+    assert g["blocking"][("ttk", "PanedWindow")] == 3
     assert g["behavior"][("mb", "askyesno")] == 2
     assert g["cosmetic"][("tk", "Scrollbar")] == 1
     assert g["other"][("other", "ttk.Mystery")] == 4
 
 
 def test_verdict_lines_are_honest_about_what_happens():
-    blocking = tk_audit.verdict(tk_audit.grade({("ttk", "Treeview"): 1}))
-    assert "will not run in-tab" in blocking and "ttk.Treeview" in blocking
+    blocking = tk_audit.verdict(tk_audit.grade({("ttk", "PanedWindow"): 1}))
+    assert "will not run in-tab" in blocking and "ttk.PanedWindow" in blocking
     behavior = tk_audit.verdict(tk_audit.grade({("mb", "askyesno"): 1}))
     assert behavior.startswith("opens, but")
     cosmetic = tk_audit.verdict(tk_audit.grade({("tk", "Scrollbar"): 1}))
@@ -168,13 +171,13 @@ def test_demo_fixture_predicts_no_gap_signals():
 
 def test_doc_renders_method_table_and_gaps():
     profiles = [
-        {"repo": "a/one", "stars": 10, "uses": {("ttk", "Treeview"): 2},
-         "verdict": "will not run in-tab — ttk.Treeview raises TclError"},
+        {"repo": "a/one", "stars": 10, "uses": {("ttk", "PanedWindow"): 2},
+         "verdict": "will not run in-tab — ttk.PanedWindow raises TclError"},
         {"repo": "b/two", "stars": 5, "error": "HTTPError: 404"},
     ]
     doc = tk_audit.render_doc(profiles, "2026-11-14", ["gap one"], 20)
     assert "## Method" in doc and "forks excluded" in doc
-    assert "| `ttk/Treeview` | blocking | 1 | 2 |" in doc
+    assert "| `ttk/PanedWindow` | blocking | 1 | 2 |" in doc
     assert "| a/one | 10 | will not run in-tab" in doc
     assert "| b/two | 5 | fetch failed (HTTPError: 404) |" in doc
     assert "- gap one" in doc
@@ -182,13 +185,13 @@ def test_doc_renders_method_table_and_gaps():
 
 def test_doc_names_the_sprint_item_from_the_blocking_rows():
     profiles = [
-        {"repo": "a/one", "stars": 10, "uses": {("ttk", "Treeview"): 3, ("tk", "Label"): 5},
+        {"repo": "a/one", "stars": 10, "uses": {("ttk", "PanedWindow"): 3, ("tk", "Label"): 5},
          "verdict": "will not run in-tab"},
-        {"repo": "b/two", "stars": 5, "uses": {("ttk", "Treeview"): 1, ("tk", "Tk"): 1},
+        {"repo": "b/two", "stars": 5, "uses": {("ttk", "PanedWindow"): 1, ("tk", "Tk"): 1},
          "verdict": "will not run in-tab"},
     ]
     doc = tk_audit.render_doc(profiles, "2026-11-14", [], 20)
-    assert "`ttk/Treeview`, used by 2 of 2 repos — that is the sprint item" in doc
+    assert "`ttk/PanedWindow`, used by 2 of 2 repos — that is the sprint item" in doc
 
 
 def test_supported_widgets_render_as_supported_not_other():
@@ -204,7 +207,7 @@ def test_notebook_graded_supported_after_the_first_sprint():
     # the sprint shipped it as a real tab bar, so it must grade supported now
     assert ("ttk", "Notebook") not in tk_audit.WEIGHTS
     assert tk_audit._weight_of(("ttk", "Notebook")) == "supported"
-    assert tk_audit._weight_of(("ttk", "Treeview")) == "blocking"  # still a wall
+    assert tk_audit._weight_of(("ttk", "PanedWindow")) == "blocking"  # still a wall
 
 
 def test_progressbar_graded_supported_after_the_second_sprint():
@@ -213,4 +216,14 @@ def test_progressbar_graded_supported_after_the_second_sprint():
     # measured against real Tk 9.0), so it must grade supported now
     assert ("ttk", "Progressbar") not in tk_audit.WEIGHTS
     assert tk_audit._weight_of(("ttk", "Progressbar")) == "supported"
-    assert tk_audit._weight_of(("ttk", "Treeview")) == "blocking"  # still a wall
+    assert tk_audit._weight_of(("ttk", "PanedWindow")) == "blocking"  # still a wall
+
+
+def test_treeview_graded_supported_after_the_third_sprint():
+    # the 2026-11-14 audit ranked ttk.Treeview the top blocker (5 of 20 repos);
+    # the third sprint shipped it (insert/heading/column/selection/item/delete/
+    # get_children, both show modes — the surface dumped from the corpus), so
+    # it must grade supported now
+    assert ("ttk", "Treeview") not in tk_audit.WEIGHTS
+    assert tk_audit._weight_of(("ttk", "Treeview")) == "supported"
+    assert tk_audit._weight_of(("ttk", "PanedWindow")) == "blocking"  # the last wall

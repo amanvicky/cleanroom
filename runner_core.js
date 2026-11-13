@@ -157,6 +157,8 @@ export const SHELF = [
     what: "an input() quiz — the terminal box queues answers for the VM's stdin", at: "75c5601" },
   { repo: "https://github.com/amanvicky/progressbar-demo",
     what: "three progress bars — step() wrap, start()/stop() timers, indeterminate bounce", at: "0565af3" },
+  { repo: "https://github.com/amanvicky/treeview-demo",
+    what: "a task table with real selection state, and a tree outline with expand toggles", at: "6d5393f" },
 ];
 
 /* README-and-manifest understanding for Python repos: what to install and
