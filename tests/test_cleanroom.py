@@ -214,3 +214,26 @@ def test_cli_scan_json(local_fixture):
     rep = json.loads(p.stdout)
     assert rep["verdict"] == "dangerous"
     assert rep["score"] == 100
+
+
+def test_wipe_kills_detached_services_holding_the_sandbox(tmp_path):
+    """Dev servers spawn compiler services that detach from the process tree
+    and keep the sandbox's files locked — close() kills every process whose
+    command line references the sandbox path, and only those."""
+    import subprocess
+    import sys
+    import time
+
+    d = str(tmp_path / "cleanroom-demo")
+    os.makedirs(d)
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)  # " + d])
+    bystander = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)  # unrelated work"])
+    time.sleep(1.0)
+    sandbox._kill_services_inside(d)
+    time.sleep(1.0)
+    assert holder.poll() is not None, "the detached holder must be killed"
+    assert bystander.poll() is None, "processes outside the sandbox must be untouched"
+    bystander.kill()
+    bystander.wait(timeout=10)

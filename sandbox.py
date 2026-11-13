@@ -116,6 +116,30 @@ def _kill_tree(pid):
                 pass
 
 
+def _kill_services_inside(path):
+    """Dev servers spawn compiler services (esbuild, rolldown, next dev
+    workers) that DETACH from the process tree and keep the sandbox's
+    node_modules locked — a wipe would leave stragglers. Kill every process
+    whose command line references THIS sandbox's path before deleting.
+    Surgical: only processes pointing at cleanroom's own temp dir; a match on
+    the full path cannot touch the operator's other work."""
+    if sys.platform == "win32":
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '"
+              + path.replace("\\", "\\\\") + "' } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+    else:
+        try:
+            subprocess.run(["pkill", "-f", re.escape(path)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+
+
 def _rmtree_robust(path, attempts=6):
     """Delete a tree even when Windows still holds file handles a moment
     after a child was killed. Returns True when the tree is really gone."""
@@ -335,6 +359,7 @@ class Session:
             self._timer.cancel()
         deleted = False
         if self.dir and os.path.isdir(self.dir):
+            _kill_services_inside(self.dir)
             deleted = _rmtree_robust(self.dir)
         residue = sorted(n for n in os.listdir(tempfile.gettempdir())
                          if n.startswith("cleanroom-"))

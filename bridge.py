@@ -76,6 +76,7 @@ def _understand(tree):
     paths = set(files)
     installs, install_cmds, run_cmds = [], [], []
     kind = "cli"
+    needs_net = False
 
     # manifests → install commands
     req_files = sorted(p for p in paths if p.startswith("requirements") and p.endswith(".txt"))
@@ -106,6 +107,19 @@ def _understand(tree):
         kind = "asgi"
     elif "gemfile" in paths:
         kind = "rails"
+
+    # the README's own install commands — the fallback for repos whose
+    # manifests don't say what to install (manifests stay authoritative)
+    if not install_cmds:
+        for p in sorted(paths):
+            if p.endswith((".md", ".rst", ".txt")) and p.startswith("readme"):
+                for m in re.finditer(r"(?m)^\s{0,4}(pip install [^\n]{2,90}|npm install[^\n]{0,60})$",
+                                     files[p]):
+                    c = m.group(1).strip()
+                    if c not in install_cmds:
+                        install_cmds.append(c)
+                break
+        needs_net = needs_net or bool(install_cmds)
 
     # run commands, most-specific first
     pkg = None

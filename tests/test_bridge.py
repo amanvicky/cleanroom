@@ -336,3 +336,17 @@ def test_understand_builds_the_chain_from_the_repos_own_files():
 
     su3 = bm._understand([("README.md", "just docs")])
     assert su3["chain"] is None and su3["kind"] == "cli"
+
+
+def test_understand_reads_pip_installs_from_the_readme():
+    """Repos without manifest files document their install in the README —
+    the chain must carry it verbatim."""
+    tree = [
+        ("README.md", "## install\n\npip install flask\n\n## run\n\npython app.py\n"),
+        ("app.py", "from flask import Flask\napp = Flask(__name__)"),
+    ]
+    su = bm._understand(tree)
+    assert "pip install flask" in su["install_cmds"]
+    assert su["run_cmd"] == "python app.py"
+    assert su["chain"] == "pip install flask && python app.py"
+    assert su["needs_net"] is True
