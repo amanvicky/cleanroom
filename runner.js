@@ -905,7 +905,7 @@ function applyProps(rec) {
   if (p.height !== undefined) {
     if (rec.kind === "text") el.rows = p.height;
     else if (rec.kind === "listbox") el.size = Math.max(2, p.height);
-    else el.style.height = p.height + "px";
+    else if (rec.kind !== "tree") el.style.height = p.height + "px"; // a tree's height is visible ROWS — renderTree turns it into max-height
   }
   if (p.wrap !== undefined && rec.kind === "text") el.wrap = p.wrap === "none" ? "off" : "soft";
   if (rec.kind === "progress") {
